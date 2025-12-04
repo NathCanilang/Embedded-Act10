@@ -1,0 +1,128 @@
+{% extends 'base.html' %} {% block title %}Face Detection - Face Recognition
+System{% endblock %} {% block extra_css %}
+<link
+  rel="stylesheet"
+  href="{{ url_for('static', filename='css/main.css') }}"
+/>
+{% endblock %} {% block content %}
+<div class="row">
+  <!-- Video Feed Section -->
+  <div class="col-lg-8 mb-4">
+    <div class="card bg-dark border-secondary">
+      <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><span class="me-2">📹</span> Live Camera Feed</h5>
+      </div>
+      <div class="card-body p-0">
+        <div class="video-container">
+          <img
+            id="video-feed"
+            src="{{ url_for('main.video_feed') }}"
+            alt="Video Feed"
+            class="video-feed"
+          />
+          <div class="video-overlay" id="video-overlay">
+            <div class="spinner-border text-primary" role="status">
+              <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading camera...</p>
+          </div>
+        </div>
+      </div>
+      <div class="card-footer">
+        <div class="d-flex justify-content-between align-items-center">
+          <span class="text-muted">
+            <span id="status-indicator" class="status-dot"></span>
+            <span id="status-text">Camera Active</span>
+          </span>
+          <a
+            href="{{ url_for('register.register_page') }}"
+            class="btn btn-success"
+          >
+            <span class="me-1">➕</span> Register New Face
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Info Panel -->
+  <div class="col-lg-4">
+    <!-- Legend Card -->
+    <div class="card bg-dark border-secondary mb-4">
+      <div class="card-header bg-secondary">
+        <h5 class="mb-0"><span class="me-2">📋</span> Detection Legend</h5>
+      </div>
+      <div class="card-body">
+        <div class="legend-item mb-3">
+          <div class="legend-box legend-known"></div>
+          <div class="legend-text">
+            <strong>Green Box</strong>
+            <p class="text-muted mb-0 small">
+              Recognized face - Name displayed
+            </p>
+          </div>
+        </div>
+        <div class="legend-item">
+          <div class="legend-box legend-unknown"></div>
+          <div class="legend-text">
+            <strong>Red Box</strong>
+            <p class="text-muted mb-0 small">Unknown face - Not registered</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Registered Faces Card -->
+    <div class="card bg-dark border-secondary mb-4">
+      <div
+        class="card-header bg-secondary d-flex justify-content-between align-items-center"
+      >
+        <h5 class="mb-0"><span class="me-2">👥</span> Registered Faces</h5>
+        <div>
+          <button
+            class="btn btn-sm btn-outline-warning me-1"
+            id="reload-model-btn"
+            title="Reload Model"
+          >
+            🧠
+          </button>
+          <button
+            class="btn btn-sm btn-outline-light"
+            id="refresh-faces-btn"
+            title="Refresh List"
+          >
+            🔄
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="registered-faces-list">
+          <p class="text-muted text-center">Loading...</p>
+        </div>
+        <div id="model-status" class="mt-2 small text-muted"></div>
+      </div>
+    </div>
+
+    <!-- Instructions Card -->
+    <div class="card bg-dark border-secondary">
+      <div class="card-header bg-info text-dark">
+        <h5 class="mb-0"><span class="me-2">ℹ️</span> How it Works</h5>
+      </div>
+      <div class="card-body">
+        <ol class="instructions-list">
+          <li>Camera detects faces in real-time</li>
+          <li>
+            Known faces show with <span class="text-success">green</span> boxes
+          </li>
+          <li>
+            Unknown faces show with <span class="text-danger">red</span> boxes
+          </li>
+          <li>Click "Register New Face" to add someone</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block extra_js %}
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% endblock %}

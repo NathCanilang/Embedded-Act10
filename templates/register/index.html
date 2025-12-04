@@ -1,0 +1,168 @@
+{% extends 'base.html' %} {% block title %}Register Face - Face Recognition
+System{% endblock %} {% block extra_css %}
+<link
+  rel="stylesheet"
+  href="{{ url_for('static', filename='css/register.css') }}"
+/>
+{% endblock %} {% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <!-- Page Header -->
+    <div class="text-center mb-4">
+      <h2 class="text-primary">
+        <span class="me-2">📝</span> Register New Face
+      </h2>
+      <p class="text-muted">
+        Capture {{ images_to_capture }} images to register a new face
+      </p>
+    </div>
+
+    <div class="row">
+      <!-- Camera Feed Section -->
+      <div class="col-md-7 mb-4">
+        <div class="card bg-dark border-secondary">
+          <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><span class="me-2">📹</span> Camera Preview</h5>
+          </div>
+          <div class="card-body p-0">
+            <div class="video-container">
+              <img
+                id="video-feed"
+                src="{{ url_for('register.video_feed') }}"
+                alt="Video Feed"
+                class="video-feed"
+              />
+              <div class="video-overlay" id="video-overlay">
+                <div class="spinner-border text-primary" role="status">
+                  <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2">Loading camera...</p>
+              </div>
+              <!-- Capture flash overlay -->
+              <div
+                class="capture-flash-overlay d-none"
+                id="capture-flash"
+              ></div>
+            </div>
+          </div>
+          <div class="card-footer">
+            <!-- Progress bar -->
+            <div
+              class="progress mb-3 d-none"
+              id="capture-progress-container"
+              style="height: 25px"
+            >
+              <div
+                class="progress-bar progress-bar-striped progress-bar-animated bg-success"
+                id="capture-progress"
+                role="progressbar"
+                style="width: 0%"
+              >
+                <span id="progress-text">0 / {{ images_to_capture }}</span>
+              </div>
+            </div>
+            <button class="btn btn-primary w-100" id="start-capture-btn">
+              <span class="me-2">📸</span> Start Capture ({{ images_to_capture
+              }} images)
+            </button>
+            <button class="btn btn-danger w-100 d-none" id="stop-capture-btn">
+              <span class="me-2">⏹️</span> Stop Capture
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registration Form Section -->
+      <div class="col-md-5 mb-4">
+        <div class="card bg-dark border-secondary">
+          <div class="card-header bg-success text-white">
+            <h5 class="mb-0"><span class="me-2">✏️</span> Registration Form</h5>
+          </div>
+          <div class="card-body">
+            <!-- Captured Images Preview Grid -->
+            <div class="captured-grid mb-3" id="captured-grid">
+              <div class="placeholder-box text-center p-4">
+                <span class="placeholder-icon d-block" style="font-size: 3rem"
+                  >👤</span
+                >
+                <p class="text-muted mb-0">Captured faces will appear here</p>
+              </div>
+            </div>
+
+            <!-- Registration Form -->
+            <form id="register-form">
+              <div class="mb-3">
+                <label for="person-name" class="form-label">Name</label>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="person-name"
+                  placeholder="Enter person's name"
+                  required
+                />
+                <small class="text-muted"
+                  >Enter name before starting capture</small
+                >
+              </div>
+              <div class="d-grid gap-2">
+                <button
+                  type="submit"
+                  class="btn btn-success"
+                  id="register-btn"
+                  disabled
+                >
+                  <span class="me-2">✅</span> Complete Registration
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-outline-danger d-none"
+                  id="cancel-btn"
+                >
+                  <span class="me-2">❌</span> Cancel & Clear
+                </button>
+              </div>
+            </form>
+
+            <!-- Message Area -->
+            <div id="message-area" class="mt-3"></div>
+          </div>
+        </div>
+
+        <!-- Instructions Card -->
+        <div class="card bg-dark border-secondary mt-4">
+          <div class="card-header bg-info text-dark">
+            <h5 class="mb-0"><span class="me-2">📖</span> Instructions</h5>
+          </div>
+          <div class="card-body">
+            <ol class="instructions-list mb-0">
+              <li>Enter your name in the form</li>
+              <li>Click <strong>"Start Capture"</strong></li>
+              <li>Move your head slowly (left, right, up, down)</li>
+              <li>Wait for {{ images_to_capture }} images to be captured</li>
+              <li>Click <strong>"Complete Registration"</strong></li>
+            </ol>
+            <div class="alert alert-info mt-3 mb-0">
+              <small
+                >💡 <strong>Tip:</strong> Vary your head position and
+                expressions for better accuracy.</small
+              >
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Back Button -->
+    <div class="text-center mt-3">
+      <a href="{{ url_for('main.index') }}" class="btn btn-outline-secondary">
+        <span class="me-2">←</span> Back to Detection
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden value for JS -->
+<input type="hidden" id="images-to-capture" value="{{ images_to_capture }}" />
+{% endblock %} {% block extra_js %}
+<script src="{{ url_for('static', filename='js/register.js') }}"></script>
+{% endblock %}

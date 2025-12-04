@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Face Recognition System{% endblock %}</title>
+
+    <!-- Bootstrap CSS -->
+    <link
+      href="{{ url_for('static', filename='bootstrap/css/bootstrap.min.css') }}"
+      rel="stylesheet"
+    />
+
+    <!-- Custom CSS -->
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/base.css') }}"
+    />
+    {% block extra_css %}{% endblock %}
+  </head>
+  <body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+      <div class="container">
+        <a class="navbar-brand" href="{{ url_for('main.index') }}">
+          <span class="brand-icon">🎥</span> Face Recognition
+        </a>
+        <button
+          class="navbar-toggler"
+          type="button"
+          data-bs-toggle="collapse"
+          data-bs-target="#navbarNav"
+        >
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <ul class="navbar-nav ms-auto">
+            <li class="nav-item">
+              <a
+                class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}"
+                href="{{ url_for('main.index') }}"
+              >
+                <i class="bi bi-camera-video"></i> Detection
+              </a>
+            </li>
+            <li class="nav-item">
+              <a
+                class="nav-link {% if request.endpoint == 'register.register_page' %}active{% endif %}"
+                href="{{ url_for('register.register_page') }}"
+              >
+                <i class="bi bi-person-plus"></i> Register Face
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="container py-4">{% block content %}{% endblock %}</main>
+
+    <!-- Footer -->
+    <footer class="footer mt-auto py-3 bg-dark">
+      <div class="container text-center">
+        <span class="text-muted">Face Recognition System &copy; 2025</span>
+      </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="{{ url_for('static', filename='bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+
+    {% block extra_js %}{% endblock %}
+  </body>
+</html>
