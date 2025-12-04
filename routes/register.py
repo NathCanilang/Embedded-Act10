@@ -4,11 +4,15 @@ import base64
 import numpy as np
 import os
 import shutil
+import time
 from datetime import datetime
-from camera import generate_frames, capture_frame, face_cascade
+from camera import generate_frames, capture_frame, face_cascade, get_camera
 from face_detection import (
     train_model, get_registered_names, 
     get_person_image_count, delete_person
+)
+from gesture_detection import (
+    detect_gesture, draw_hand_landmarks, draw_gesture_indicator
 )
 
 register_bp = Blueprint('register', __name__)
@@ -28,8 +32,14 @@ registration_session = {
     'active': False,
     'name': '',
     'captured_count': 0,
-    'images': []
+    'images': [],
+    'gesture_capture_enabled': False,
+    'last_gesture': None,
+    'last_gesture_time': 0
 }
+
+# Gesture cooldown (seconds)
+GESTURE_COOLDOWN = 1.5
 
 @register_bp.route('/')
 def register_page():
@@ -42,6 +52,70 @@ def video_feed():
     return Response(generate_frames(),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@register_bp.route('/video_feed_gesture')
+def video_feed_gesture():
+    """Video streaming route with gesture detection overlay"""
+    return Response(generate_frames_with_gesture(),
+                   mimetype='multipart/x-mixed-replace; boundary=frame')
+
+def generate_frames_with_gesture():
+    """Generate video frames with gesture detection overlay."""
+    global registration_session
+    
+    cam = get_camera()
+    
+    while True:
+        success, frame = cam.read()
+        if not success:
+            break
+        
+        # Detect gesture
+        gesture, confidence, landmarks = detect_gesture(frame)
+        
+        # Draw hand landmarks
+        if landmarks:
+            frame = draw_hand_landmarks(frame, landmarks)
+        
+        # Draw gesture indicator
+        frame = draw_gesture_indicator(frame, gesture, confidence)
+        
+        # Update session with detected gesture (with cooldown)
+        current_time = time.time()
+        if gesture and (current_time - registration_session['last_gesture_time']) > GESTURE_COOLDOWN:
+            registration_session['last_gesture'] = gesture
+            registration_session['last_gesture_time'] = current_time
+        
+        # Add instructions overlay
+        cv2.putText(frame, "Gestures: Thumbs Up=Capture, Thumbs Down=Cancel, One=New User", 
+                    (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+        
+        # Encode and yield frame
+        ret, buffer = cv2.imencode('.jpg', frame)
+        frame_bytes = buffer.tobytes()
+        
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+@register_bp.route('/gesture_status')
+def gesture_status():
+    """Get current gesture status for polling."""
+    global registration_session
+    
+    gesture = registration_session.get('last_gesture')
+    gesture_time = registration_session.get('last_gesture_time', 0)
+    
+    # Clear gesture after reading (one-time trigger)
+    if gesture:
+        registration_session['last_gesture'] = None
+    
+    return jsonify({
+        'gesture': gesture,
+        'timestamp': gesture_time,
+        'session_active': registration_session.get('active', False),
+        'captured_count': registration_session.get('captured_count', 0),
+        'gesture_capture_enabled': registration_session.get('gesture_capture_enabled', False)
+    })
+
 @register_bp.route('/start', methods=['POST'])
 def start_registration():
     """Start a new registration session"""
@@ -53,12 +127,15 @@ def start_registration():
     if not name:
         return jsonify({'status': 'error', 'message': 'Name is required'})
     
-    # Reset session
+    # Reset session with gesture support
     registration_session = {
         'active': True,
         'name': name,
         'captured_count': 0,
-        'images': []
+        'images': [],
+        'gesture_capture_enabled': True,
+        'last_gesture': None,
+        'last_gesture_time': 0
     }
     
     print(f"Started registration for: {name}")
@@ -266,7 +343,10 @@ def complete_registration():
             'active': False,
             'name': '',
             'captured_count': 0,
-            'images': []
+            'images': [],
+            'gesture_capture_enabled': False,
+            'last_gesture': None,
+            'last_gesture_time': 0
         }
         
         return jsonify({
@@ -283,28 +363,32 @@ def cancel_registration():
     """Cancel the current registration session"""
     global registration_session
     
-    if registration_session['active']:
-        name = registration_session['name']
+    if registration_session.get('active', False):
+        name = registration_session.get('name', '')
         
         # Optionally delete captured images
-        try:
-            known_faces_dir = current_app.config.get('KNOWN_FACES_DIR', 'known_faces')
-            person_dir = os.path.join(known_faces_dir, name)
-            if os.path.exists(person_dir):
-                # Only delete if it was just created (has few images)
-                count = get_person_image_count(name)
-                if count <= IMAGES_TO_CAPTURE:
-                    shutil.rmtree(person_dir)
-                    print(f"Deleted incomplete registration for {name}")
-        except Exception as e:
-            print(f"Error cleaning up: {e}")
+        if name:
+            try:
+                known_faces_dir = current_app.config.get('KNOWN_FACES_DIR', 'known_faces')
+                person_dir = os.path.join(known_faces_dir, name)
+                if os.path.exists(person_dir):
+                    # Only delete if it was just created (has few images)
+                    count = get_person_image_count(name)
+                    if count <= IMAGES_TO_CAPTURE:
+                        shutil.rmtree(person_dir)
+                        print(f"Deleted incomplete registration for {name}")
+            except Exception as e:
+                print(f"Error cleaning up: {e}")
     
     # Reset session
     registration_session = {
         'active': False,
         'name': '',
         'captured_count': 0,
-        'images': []
+        'images': [],
+        'gesture_capture_enabled': False,
+        'last_gesture': None,
+        'last_gesture_time': 0
     }
     
     return jsonify({'status': 'cancelled'})

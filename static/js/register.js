@@ -1,4 +1,4 @@
-// Registration JavaScript
+// Registration JavaScript with Gesture Control
 document.addEventListener("DOMContentLoaded", function () {
   // Get elements matching the HTML template
   const videoFeed = document.getElementById("video-feed");
@@ -30,6 +30,8 @@ document.addEventListener("DOMContentLoaded", function () {
   let isCapturing = false;
   let captureInterval = null;
   let capturedImages = [];
+  let gesturePollingInterval = null;
+  let sessionStarted = false;
 
   // === HIDE SPINNER WHEN CAMERA IS READY ===
   let streamStarted = false;
@@ -51,6 +53,8 @@ document.addEventListener("DOMContentLoaded", function () {
       videoFeed.naturalHeight > 0
     ) {
       hideOverlay();
+      // Start gesture polling after camera is ready
+      startGesturePolling();
       return;
     }
     if (!streamStarted) {
@@ -61,10 +65,103 @@ document.addEventListener("DOMContentLoaded", function () {
   // Fallback: Hide after 3 seconds regardless
   setTimeout(() => {
     hideOverlay();
+    startGesturePolling();
   }, 3000);
 
   // Start checking immediately
   checkStreamReady();
+
+  // === GESTURE POLLING ===
+  function startGesturePolling() {
+    if (gesturePollingInterval) return;
+
+    gesturePollingInterval = setInterval(pollGestureStatus, 300);
+    console.log("Gesture polling started");
+  }
+
+  function stopGesturePolling() {
+    if (gesturePollingInterval) {
+      clearInterval(gesturePollingInterval);
+      gesturePollingInterval = null;
+    }
+  }
+
+  function pollGestureStatus() {
+    fetch("/register/gesture_status")
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.gesture) {
+          handleGesture(data.gesture);
+        }
+      })
+      .catch((error) => {
+        console.error("Gesture poll error:", error);
+      });
+  }
+
+  function handleGesture(gesture) {
+    console.log("Gesture detected:", gesture);
+
+    switch (gesture) {
+      case "thumbs_up":
+        handleThumbsUp();
+        break;
+      case "thumbs_down":
+        handleThumbsDown();
+        break;
+      case "one":
+        handleOneGesture();
+        break;
+    }
+  }
+
+  // 👍 Thumbs Up: Start capture or capture image
+  function handleThumbsUp() {
+    if (!sessionStarted) {
+      // If name is entered and session not started, start it
+      userName = nameInput.value.trim();
+      if (userName) {
+        startCaptureBtn.click();
+      } else {
+        showMessage(
+          "Please enter a name first, then show 👍 Thumbs Up",
+          "warning"
+        );
+        nameInput.focus();
+      }
+    } else if (isCapturing) {
+      // Capture is already running - show feedback
+      setStatus("👍 Capturing... Keep showing thumbs up!", "success");
+    }
+  }
+
+  // 👎 Thumbs Down: Cancel registration
+  function handleThumbsDown() {
+    if (sessionStarted) {
+      showMessage(
+        "👎 Thumbs Down detected - Cancelling registration...",
+        "warning"
+      );
+      setTimeout(() => {
+        stopCapturing();
+        fetch("/register/cancel", { method: "POST" });
+        resetCapture();
+        showMessage("Registration cancelled via gesture", "info");
+      }, 500);
+    }
+  }
+
+  // ☝️ One: Register new user (reset form)
+  function handleOneGesture() {
+    if (!isCapturing) {
+      showMessage(
+        "☝️ One gesture detected - Ready for new registration",
+        "info"
+      );
+      resetCapture();
+      nameInput.focus();
+    }
+  }
 
   // === START CAPTURE BUTTON ===
   startCaptureBtn.addEventListener("click", function () {
@@ -99,7 +196,11 @@ document.addEventListener("DOMContentLoaded", function () {
       .then((response) => response.json())
       .then((data) => {
         if (data.status === "started") {
-          setStatus("Look at the camera and move naturally", "info");
+          sessionStarted = true;
+          setStatus(
+            "👍 Show Thumbs Up to capture, or wait for auto-capture",
+            "info"
+          );
           setTimeout(startCapturing, 1000);
         } else {
           showMessage(
@@ -291,6 +392,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // === RESET CAPTURE STATE ===
   function resetCapture() {
     stopCapturing();
+    sessionStarted = false;
     nameInput.disabled = false;
     nameInput.value = "";
     startCaptureBtn.classList.remove("d-none");

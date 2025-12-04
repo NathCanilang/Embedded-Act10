@@ -29,7 +29,7 @@ System{% endblock %} {% block extra_css %}
             <div class="video-container">
               <img
                 id="video-feed"
-                src="{{ url_for('register.video_feed') }}"
+                src="{{ url_for('register.video_feed_gesture') }}"
                 alt="Video Feed"
                 class="video-feed"
               />
@@ -146,17 +146,33 @@ System{% endblock %} {% block extra_css %}
           <div class="card-body">
             <ol class="instructions-list mb-0">
               <li>Enter your name in the form</li>
-              <li>Click <strong>"Start Capture"</strong></li>
-              <li>Move your head slowly (left, right, up, down)</li>
-              <li>Vary your distance from the camera</li>
-              <li>Wait for {{ images_to_capture }} images to be captured</li>
-              <li>Click <strong>"Complete Registration"</strong></li>
+              <li>
+                Click <strong>"Start Capture"</strong> or show 👍
+                <strong>Thumbs Up</strong>
+              </li>
+              <li>
+                Keep showing 👍 <strong>Thumbs Up</strong> to capture images
+              </li>
+              <li>Move your head slowly while capturing</li>
+              <li>
+                Show 👎 <strong>Thumbs Down</strong> to cancel registration
+              </li>
+              <li>
+                Show ☝️ <strong>One finger</strong> to register another user
+              </li>
             </ol>
-            <div class="alert alert-warning mt-3 mb-0">
+            <div class="alert alert-info mt-3 mb-2">
+              <small>
+                <strong>🤚 Hand Gestures:</strong><br />
+                👍 Thumbs Up = Start/Continue Capturing<br />
+                👎 Thumbs Down = Cancel & Clear Images<br />
+                ☝️ One Finger = Register New User
+              </small>
+            </div>
+            <div class="alert alert-warning mb-0">
               <small
                 >⚠️ <strong>Quality checks:</strong> Images are validated for
-                proper size, lighting, and clarity. Blurry or poorly lit
-                captures will be rejected.</small
+                proper size, lighting, and clarity.</small
               >
             </div>
           </div>

@@ -1,6 +1,7 @@
 flask>=2.0.0
 opencv-contrib-python>=4.5.0
 numpy>=1.20.0
+mediapipe>=0.10.0
 
 # For Raspberry Pi (optional)
 # picamera2
