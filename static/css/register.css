@@ -163,3 +163,78 @@
 .flash-animation {
   animation: flash 0.3s ease;
 }
+
+/* Position instruction styling */
+.position-instruction {
+  text-align: center;
+}
+
+.position-icons {
+  display: flex;
+  justify-content: space-around;
+  gap: 10px;
+}
+
+.position-icon {
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  transition: all 0.3s ease;
+}
+
+.position-icon.active {
+  background: rgba(255, 255, 255, 0.2);
+  font-weight: bold;
+  transform: scale(1.1);
+}
+
+/* Captured thumb container for position badge */
+.captured-thumb-container {
+  position: relative;
+}
+
+.position-badge {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+/* Position guide overlay */
+.position-guide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.position-indicator {
+  border: 3px dashed rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  transition: all 0.3s ease;
+}
+
+.position-indicator.near {
+  width: 250px;
+  height: 250px;
+  border-color: #ffc107;
+}
+
+.position-indicator.medium {
+  width: 180px;
+  height: 180px;
+  border-color: #0dcaf0;
+}
+
+.position-indicator.far {
+  width: 120px;
+  height: 120px;
+  border-color: #198754;
+}

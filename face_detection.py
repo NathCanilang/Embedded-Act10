@@ -1,9 +1,9 @@
 """
-Face Recognition Module using KNN (K-Nearest Neighbors)
+Face Recognition Module using LBPH (Local Binary Pattern Histogram)
 
 This module handles:
-- Face encoding extraction using histogram-based features
-- KNN-based face recognition
+- Face detection using Haar Cascade
+- Face recognition using OpenCV's LBPH Face Recognizer
 - Model training and persistence
 """
 
@@ -11,60 +11,33 @@ import cv2
 import numpy as np
 import os
 import pickle
-from sklearn.neighbors import KNeighborsClassifier
 
 # Paths
 KNOWN_FACES_DIR = "known_faces"
-MODEL_PATH = "face_model.pkl"
-ENCODINGS_PATH = "face_encodings.pkl"
+MODEL_PATH = "face_model.yml"
+LABELS_PATH = "face_labels.pkl"
 
 # Face cascade for detection
 face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_alt.xml")
 
-# Global KNN model and data
-knn_model = None
-face_encodings = []
-face_labels = []
+# Global LBPH recognizer and label mapping
+lbph_recognizer = None
+label_to_name = {}
+name_to_label = {}
 
-def extract_face_encoding(face_image):
-    """
-    Extract face encoding using Local Binary Pattern Histogram (LBPH) features.
-    This provides a compact representation of the face.
-    
-    Args:
-        face_image: Grayscale face image (cropped)
-    
-    Returns:
-        numpy array of face features
-    """
-    # Resize face to standard size
-    face_resized = cv2.resize(face_image, (100, 100))
-    
-    # Calculate histogram of the face
-    hist = cv2.calcHist([face_resized], [0], None, [256], [0, 256])
-    hist = cv2.normalize(hist, hist).flatten()
-    
-    # Also add some structural features using HOG-like approach
-    # Divide face into grid and get mean intensity
-    grid_size = 10
-    cell_h = face_resized.shape[0] // grid_size
-    cell_w = face_resized.shape[1] // grid_size
-    
-    grid_features = []
-    for i in range(grid_size):
-        for j in range(grid_size):
-            cell = face_resized[i*cell_h:(i+1)*cell_h, j*cell_w:(j+1)*cell_w]
-            grid_features.append(np.mean(cell))
-            grid_features.append(np.std(cell))
-    
-    # Combine features
-    features = np.concatenate([hist, np.array(grid_features)])
-    
-    return features
+# Recognition threshold - lower is stricter (LBPH confidence is distance-based)
+# Values < 50 are very good matches, 50-80 are acceptable, > 80 are poor
+RECOGNITION_THRESHOLD = 80
+
+# Face size requirements for validation
+MIN_FACE_SIZE = 80   # Minimum face width/height in pixels (far position)
+MAX_FACE_SIZE = 300  # Maximum face width/height in pixels (near position)
+IDEAL_FACE_SIZE = 150  # Ideal face size (medium position)
 
 def detect_face(frame):
     """
     Detect faces in a frame and return face regions.
+    Uses more stable parameters to reduce flickering.
     
     Args:
         frame: BGR image
@@ -74,11 +47,22 @@ def detect_face(frame):
     """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
+    # Apply bilateral filter to reduce noise while keeping edges
+    gray = cv2.bilateralFilter(gray, 5, 75, 75)
+    
+    # Equalize histogram for better detection in varying lighting
+    gray = cv2.equalizeHist(gray)
+    
+    # Use more stable detection parameters
+    # - Higher minNeighbors (7) reduces false positives and flickering
+    # - Larger minSize (50x50) ignores small false detections
+    # - scaleFactor 1.05 for finer scale pyramid (more stable but slower)
     faces = face_cascade.detectMultiScale(
         gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30)
+        scaleFactor=1.05,
+        minNeighbors=7,
+        minSize=(50, 50),
+        flags=cv2.CASCADE_SCALE_IMAGE
     )
     
     result = []
@@ -88,28 +72,62 @@ def detect_face(frame):
     
     return result
 
+def validate_face_for_capture(face_width, face_height, required_position=None):
+    """
+    Validate if a face is suitable for capture based on size and position requirements.
+    
+    Args:
+        face_width: Width of detected face
+        face_height: Height of detected face
+        required_position: 'near', 'medium', 'far', or None for any
+    
+    Returns:
+        Tuple (is_valid, message, detected_position)
+    """
+    face_size = max(face_width, face_height)
+    
+    # Determine detected position based on face size
+    if face_size >= 200:
+        detected_position = 'near'
+    elif face_size >= 120:
+        detected_position = 'medium'
+    elif face_size >= MIN_FACE_SIZE:
+        detected_position = 'far'
+    else:
+        return False, f"Face too small ({face_size}px). Move closer to the camera.", None
+    
+    if face_size > MAX_FACE_SIZE:
+        return False, f"Face too close ({face_size}px). Move back from the camera.", detected_position
+    
+    # Check if it matches required position
+    if required_position:
+        if required_position == 'near' and face_size < 200:
+            return False, "Move CLOSER to the camera for near capture.", detected_position
+        elif required_position == 'medium' and (face_size < 120 or face_size >= 200):
+            return False, "Adjust distance for medium capture (arm's length).", detected_position
+        elif required_position == 'far' and face_size >= 120:
+            return False, "Move FURTHER from the camera for far capture.", detected_position
+    
+    return True, f"Good! Face detected at {detected_position} position.", detected_position
+
 def load_training_data():
     """
-    Load all face images from known_faces directory and extract encodings.
+    Load all face images from known_faces directory for LBPH training.
     
-    Directory structure expected:
-    known_faces/
-        person1/
-            image1.jpg  (cropped face images)
-            image2.jpg
-            ...
-        person2/
-            image1.jpg
-            ...
+    Returns:
+        Tuple (faces_list, labels_list) or ([], []) if no data
     """
-    global face_encodings, face_labels
+    global label_to_name, name_to_label
     
-    face_encodings = []
-    face_labels = []
+    faces = []
+    labels = []
+    label_to_name = {}
+    name_to_label = {}
+    current_label = 0
     
     if not os.path.exists(KNOWN_FACES_DIR):
-        print("Known faces directory not found")
-        return False
+        print("Known faces directory not found", flush=True)
+        return [], []
     
     for person_name in os.listdir(KNOWN_FACES_DIR):
         person_dir = os.path.join(KNOWN_FACES_DIR, person_name)
@@ -117,7 +135,15 @@ def load_training_data():
         if not os.path.isdir(person_dir):
             continue
         
-        print(f"Loading faces for: {person_name}")
+        print(f"Loading faces for: {person_name}", flush=True)
+        
+        # Assign label to this person
+        if person_name not in name_to_label:
+            name_to_label[person_name] = current_label
+            label_to_name[current_label] = person_name
+            current_label += 1
+        
+        person_label = name_to_label[person_name]
         
         for image_name in os.listdir(person_dir):
             if not image_name.lower().endswith(('.jpg', '.jpeg', '.png')):
@@ -126,163 +152,147 @@ def load_training_data():
             image_path = os.path.join(person_dir, image_name)
             
             try:
-                # Load image
-                img = cv2.imread(image_path)
+                # Load image in grayscale
+                img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
                 if img is None:
                     continue
                 
-                # Convert to grayscale
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                # Resize to standard size for LBPH
+                img_resized = cv2.resize(img, (100, 100))
                 
-                # The images are already cropped faces, so use directly
-                # No need to detect face again
-                encoding = extract_face_encoding(gray)
+                # Equalize histogram
+                img_equalized = cv2.equalizeHist(img_resized)
                 
-                face_encodings.append(encoding)
-                face_labels.append(person_name)
+                faces.append(img_equalized)
+                labels.append(person_label)
                     
             except Exception as e:
-                print(f"Error processing {image_path}: {e}")
+                print(f"Error processing {image_path}: {e}", flush=True)
                 continue
     
-    print(f"Loaded {len(face_encodings)} face encodings for {len(set(face_labels))} people")
-    return len(face_encodings) > 0
+    print(f"Loaded {len(faces)} face images for {len(name_to_label)} people", flush=True)
+    return faces, labels
 
 def train_model():
     """
-    Train the KNN model on the loaded face data.
+    Train the LBPH recognizer on the loaded face data.
     """
-    global knn_model
+    global lbph_recognizer, label_to_name, name_to_label
     
-    if len(face_encodings) == 0:
-        print("No training data available")
+    faces, labels = load_training_data()
+    
+    if len(faces) == 0:
+        print("No training data available", flush=True)
         return False
     
-    # Convert to numpy arrays
-    X = np.array(face_encodings)
-    y = np.array(face_labels)
-    
-    # Determine n_neighbors (should be less than number of samples)
-    n_neighbors = min(5, len(X))
-    
-    # Create and train KNN model
-    knn_model = KNeighborsClassifier(
-        n_neighbors=n_neighbors,
-        weights='distance',
-        metric='euclidean'
+    # Create LBPH Face Recognizer
+    lbph_recognizer = cv2.face.LBPHFaceRecognizer_create(
+        radius=1,
+        neighbors=8,
+        grid_x=8,
+        grid_y=8,
+        threshold=RECOGNITION_THRESHOLD
     )
     
-    knn_model.fit(X, y)
+    # Train the recognizer
+    lbph_recognizer.train(faces, np.array(labels))
     
-    print(f"Model trained with {len(X)} samples, n_neighbors={n_neighbors}")
+    print(f"LBPH model trained with {len(faces)} samples", flush=True)
     
-    # Save model and encodings
+    # Save model
     save_model()
     
     return True
 
 def save_model():
-    """Save the trained model and encodings to disk."""
-    global knn_model, face_encodings, face_labels
+    """Save the trained LBPH model and label mappings to disk."""
+    global lbph_recognizer, label_to_name, name_to_label
     
     try:
-        # Save KNN model
-        with open(MODEL_PATH, 'wb') as f:
-            pickle.dump(knn_model, f)
-        
-        # Save encodings and labels
-        with open(ENCODINGS_PATH, 'wb') as f:
-            pickle.dump({
-                'encodings': face_encodings,
-                'labels': face_labels
-            }, f)
-        
-        print("Model saved successfully")
-        return True
+        if lbph_recognizer is not None:
+            # Save LBPH model
+            lbph_recognizer.save(MODEL_PATH)
+            
+            # Save label mappings
+            with open(LABELS_PATH, 'wb') as f:
+                pickle.dump({
+                    'label_to_name': label_to_name,
+                    'name_to_label': name_to_label
+                }, f)
+            
+            print("LBPH model saved successfully", flush=True)
+            return True
     except Exception as e:
-        print(f"Error saving model: {e}")
-        return False
+        print(f"Error saving model: {e}", flush=True)
+    
+    return False
 
 def load_model():
-    """Load the trained model and encodings from disk."""
-    global knn_model, face_encodings, face_labels
+    """Load the trained LBPH model and label mappings from disk."""
+    global lbph_recognizer, label_to_name, name_to_label
     
-    print(f"Attempting to load model from {MODEL_PATH}...", flush=True)
+    print(f"Attempting to load LBPH model from {MODEL_PATH}...", flush=True)
     
     try:
-        if os.path.exists(MODEL_PATH) and os.path.exists(ENCODINGS_PATH):
-            # Load KNN model
-            with open(MODEL_PATH, 'rb') as f:
-                knn_model = pickle.load(f)
+        if os.path.exists(MODEL_PATH) and os.path.exists(LABELS_PATH):
+            # Create recognizer and load model
+            lbph_recognizer = cv2.face.LBPHFaceRecognizer_create()
+            lbph_recognizer.read(MODEL_PATH)
             
-            # Load encodings and labels
-            with open(ENCODINGS_PATH, 'rb') as f:
+            # Load label mappings
+            with open(LABELS_PATH, 'rb') as f:
                 data = pickle.load(f)
-                face_encodings = data['encodings']
-                face_labels = data['labels']
+                label_to_name = data['label_to_name']
+                name_to_label = data['name_to_label']
             
-            print(f"Model loaded: {len(face_encodings)} encodings, knn_model={knn_model is not None}", flush=True)
+            print(f"LBPH model loaded: {len(label_to_name)} people registered", flush=True)
             return True
         else:
-            print(f"Model files not found: MODEL_PATH exists={os.path.exists(MODEL_PATH)}, ENCODINGS_PATH exists={os.path.exists(ENCODINGS_PATH)}", flush=True)
+            print(f"Model files not found", flush=True)
     except Exception as e:
         print(f"Error loading model: {e}", flush=True)
     
     return False
 
-def recognize_face(face_gray, threshold=0.3):
+def recognize_face(face_gray):
     """
-    Recognize a face using the trained KNN model.
+    Recognize a face using the trained LBPH model.
     
     Args:
         face_gray: Grayscale face image (cropped)
-        threshold: Confidence threshold (higher = stricter)
     
     Returns:
         Tuple (name, confidence) or (None, 0) if not recognized
     """
-    global knn_model
+    global lbph_recognizer, label_to_name
     
-    if knn_model is None:
-        print("KNN model is None - not loaded", flush=True)
+    if lbph_recognizer is None:
         return None, 0
     
     try:
-        # Extract encoding
-        encoding = extract_face_encoding(face_gray)
-        encoding = encoding.reshape(1, -1)
+        # Resize and equalize for consistency
+        face_resized = cv2.resize(face_gray, (100, 100))
+        face_equalized = cv2.equalizeHist(face_resized)
         
-        # Get prediction and distances
-        distances, indices = knn_model.kneighbors(encoding)
+        # Predict using LBPH
+        label, confidence = lbph_recognizer.predict(face_equalized)
         
-        # Get the predicted label
-        prediction = knn_model.predict(encoding)[0]
+        # LBPH confidence is actually distance - lower is better
+        # Convert to percentage (0-100 distance maps to 100%-0% confidence)
+        confidence_percent = max(0, (100 - confidence) / 100)
         
-        # Calculate confidence (inverse of average distance)
-        avg_distance = np.mean(distances[0])
-        min_distance = np.min(distances[0])
+        print(f"Recognition: label={label}, distance={confidence:.2f}, conf={confidence_percent:.0%}", flush=True)
         
-        # Normalize confidence (lower distance = higher confidence)
-        # Known faces typically have min_distance ~160-185
-        # Unknown faces should have higher distances
-        max_distance = 300  # For confidence calculation
-        confidence = max(0, 1 - (min_distance / max_distance))
-        
-        print(f"Recognition: {prediction}, avg_dist={avg_distance:.2f}, min_dist={min_distance:.2f}, conf={confidence:.2f}", flush=True)
-        
-        # STRICT threshold: Only accept if distance is clearly a match
-        # Your registered face shows ~160-185 distance
-        # Set threshold at 200 to reject unknown faces
-        DISTANCE_THRESHOLD = 200
-        
-        if min_distance < DISTANCE_THRESHOLD:
-            return prediction, confidence
+        # Check if confidence is good enough (distance below threshold)
+        if confidence < RECOGNITION_THRESHOLD:
+            name = label_to_name.get(label, "Unknown")
+            return name, confidence_percent
         else:
-            print(f"  -> Rejected as Unknown (distance {min_distance:.2f} > threshold {DISTANCE_THRESHOLD})", flush=True)
-            return None, confidence
+            print(f"  -> Rejected as Unknown (distance {confidence:.2f} > threshold {RECOGNITION_THRESHOLD})", flush=True)
+            return None, confidence_percent
             
     except Exception as e:
-        print(f"Recognition error: {e}")
+        print(f"Recognition error: {e}", flush=True)
         return None, 0
 
 def get_registered_names():
@@ -329,19 +339,20 @@ def delete_person(name):
         print(f"Deleted person: {name}", flush=True)
         
         # Retrain model with remaining data
-        if load_training_data():
+        remaining_names = get_registered_names()
+        if remaining_names:
             train_model()
         else:
             # No data left, clear the model
-            global knn_model, face_encodings, face_labels
-            knn_model = None
-            face_encodings = []
-            face_labels = []
+            global lbph_recognizer, label_to_name, name_to_label
+            lbph_recognizer = None
+            label_to_name = {}
+            name_to_label = {}
             # Remove model files
             if os.path.exists(MODEL_PATH):
                 os.remove(MODEL_PATH)
-            if os.path.exists(ENCODINGS_PATH):
-                os.remove(ENCODINGS_PATH)
+            if os.path.exists(LABELS_PATH):
+                os.remove(LABELS_PATH)
             print("No faces remaining, model cleared", flush=True)
         
         return True
@@ -349,13 +360,22 @@ def delete_person(name):
         print(f"Error deleting person: {e}", flush=True)
         return False
 
+def get_model_info():
+    """Get information about the current model state."""
+    global lbph_recognizer, label_to_name
+    
+    return {
+        'model_loaded': lbph_recognizer is not None,
+        'num_people': len(label_to_name),
+        'registered_names': list(label_to_name.values()) if label_to_name else []
+    }
+
 # Initialize - try to load existing model
 def initialize():
     """Initialize the face recognition system."""
     if not load_model():
         # If no model exists, try to train from existing data
-        if load_training_data():
-            train_model()
+        train_model()
 
 # Auto-initialize when module is imported
 initialize()

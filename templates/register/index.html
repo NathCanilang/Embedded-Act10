@@ -13,7 +13,8 @@ System{% endblock %} {% block extra_css %}
         <span class="me-2">📝</span> Register New Face
       </h2>
       <p class="text-muted">
-        Capture {{ images_to_capture }} images to register a new face
+        Capture {{ images_to_capture }} high-quality images for accurate
+        recognition
       </p>
     </div>
 
@@ -46,6 +47,14 @@ System{% endblock %} {% block extra_css %}
             </div>
           </div>
           <div class="card-footer">
+            <!-- Capture status message -->
+            <div
+              class="capture-status alert alert-info mb-3 d-none"
+              id="capture-status"
+            >
+              <span id="status-text">Ready to capture...</span>
+            </div>
+
             <!-- Progress bar -->
             <div
               class="progress mb-3 d-none"
@@ -61,6 +70,7 @@ System{% endblock %} {% block extra_css %}
                 <span id="progress-text">0 / {{ images_to_capture }}</span>
               </div>
             </div>
+
             <button class="btn btn-primary w-100" id="start-capture-btn">
               <span class="me-2">📸</span> Start Capture ({{ images_to_capture
               }} images)
@@ -138,13 +148,15 @@ System{% endblock %} {% block extra_css %}
               <li>Enter your name in the form</li>
               <li>Click <strong>"Start Capture"</strong></li>
               <li>Move your head slowly (left, right, up, down)</li>
+              <li>Vary your distance from the camera</li>
               <li>Wait for {{ images_to_capture }} images to be captured</li>
               <li>Click <strong>"Complete Registration"</strong></li>
             </ol>
-            <div class="alert alert-info mt-3 mb-0">
+            <div class="alert alert-warning mt-3 mb-0">
               <small
-                >💡 <strong>Tip:</strong> Vary your head position and
-                expressions for better accuracy.</small
+                >⚠️ <strong>Quality checks:</strong> Images are validated for
+                proper size, lighting, and clarity. Blurry or poorly lit
+                captures will be rejected.</small
               >
             </div>
           </div>

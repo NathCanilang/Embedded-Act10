@@ -1,332 +1,332 @@
-/**
- * Register page JavaScript
- * Handles multi-image face capture and registration
- */
-
+// Registration JavaScript
 document.addEventListener("DOMContentLoaded", function () {
-  // DOM Elements
+  // Get elements matching the HTML template
   const videoFeed = document.getElementById("video-feed");
   const videoOverlay = document.getElementById("video-overlay");
+  const nameInput = document.getElementById("person-name");
   const startCaptureBtn = document.getElementById("start-capture-btn");
   const stopCaptureBtn = document.getElementById("stop-capture-btn");
-  const capturedGrid = document.getElementById("captured-grid");
-  const personNameInput = document.getElementById("person-name");
-  const registerForm = document.getElementById("register-form");
   const registerBtn = document.getElementById("register-btn");
   const cancelBtn = document.getElementById("cancel-btn");
-  const messageArea = document.getElementById("message-area");
+  const captureStatus = document.getElementById("capture-status");
+  const statusText = document.getElementById("status-text");
   const progressContainer = document.getElementById(
     "capture-progress-container"
   );
   const progressBar = document.getElementById("capture-progress");
   const progressText = document.getElementById("progress-text");
+  const capturedGrid = document.getElementById("captured-grid");
+  const messageArea = document.getElementById("message-area");
   const captureFlash = document.getElementById("capture-flash");
+  const registerForm = document.getElementById("register-form");
 
-  // Configuration
-  const IMAGES_TO_CAPTURE = parseInt(
-    document.getElementById("images-to-capture")?.value || 30
+  // Get total images from hidden input
+  const TOTAL_IMAGES = parseInt(
+    document.getElementById("images-to-capture")?.value || "40"
   );
-  const CAPTURE_INTERVAL = 500; // ms between captures
 
-  // State
-  let capturedImages = [];
-  let captureInterval = null;
+  let userName = "";
+  let capturedCount = 0;
   let isCapturing = false;
+  let captureInterval = null;
+  let capturedImages = [];
 
-  // Initialize
-  init();
+  // === HIDE SPINNER WHEN CAMERA IS READY ===
+  let streamStarted = false;
 
-  function init() {
-    // Handle video feed loading
-    videoFeed.onload = function () {
+  function hideOverlay() {
+    if (!streamStarted && videoOverlay) {
+      streamStarted = true;
       videoOverlay.classList.add("hidden");
-    };
-
-    videoFeed.onerror = function () {
-      videoOverlay.innerHTML = `
-        <span style="font-size: 2rem;">❌</span>
-        <p class="mt-2">Camera Error - Please check your camera</p>
-      `;
-    };
-
-    // Start capture button
-    startCaptureBtn.addEventListener("click", startCapture);
-
-    // Stop capture button
-    stopCaptureBtn.addEventListener("click", stopCapture);
-
-    // Register form
-    registerForm.addEventListener("submit", handleRegister);
-
-    // Cancel button
-    cancelBtn.addEventListener("click", resetForm);
+      videoOverlay.style.display = "none";
+      console.log("Register: Camera stream started - overlay hidden");
+    }
   }
 
-  function startCapture() {
-    const name = personNameInput.value.trim();
+  // Check if video feed has natural dimensions (stream started)
+  function checkStreamReady() {
+    if (
+      videoFeed &&
+      videoFeed.naturalWidth > 0 &&
+      videoFeed.naturalHeight > 0
+    ) {
+      hideOverlay();
+      return;
+    }
+    if (!streamStarted) {
+      setTimeout(checkStreamReady, 200);
+    }
+  }
 
-    if (!name) {
-      showMessage("Please enter a name first", "danger");
-      personNameInput.focus();
+  // Fallback: Hide after 3 seconds regardless
+  setTimeout(() => {
+    hideOverlay();
+  }, 3000);
+
+  // Start checking immediately
+  checkStreamReady();
+
+  // === START CAPTURE BUTTON ===
+  startCaptureBtn.addEventListener("click", function () {
+    userName = nameInput.value.trim();
+    if (!userName) {
+      showMessage("Please enter a name first", "warning");
+      nameInput.focus();
       return;
     }
 
-    // Reset state
-    capturedImages = [];
-    updateGrid();
-
-    // Update UI
-    isCapturing = true;
+    // Disable name input and show stop button
+    nameInput.disabled = true;
     startCaptureBtn.classList.add("d-none");
     stopCaptureBtn.classList.remove("d-none");
-    progressContainer.classList.remove("d-none");
-    personNameInput.disabled = true;
     cancelBtn.classList.remove("d-none");
+
+    // Show progress
+    captureStatus.classList.remove("d-none");
+    progressContainer.classList.remove("d-none");
+
+    // Clear previous captures
+    capturedImages = [];
+    capturedGrid.innerHTML =
+      '<p class="text-muted text-center">Capturing...</p>';
+
+    // Start registration on server
+    fetch("/register/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: userName }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.status === "started") {
+          setStatus("Look at the camera and move naturally", "info");
+          setTimeout(startCapturing, 1000);
+        } else {
+          showMessage(
+            "Failed to start: " + (data.message || "Unknown error"),
+            "danger"
+          );
+          resetCapture();
+        }
+      })
+      .catch((error) => {
+        console.error("Error:", error);
+        showMessage("Error starting registration", "danger");
+        resetCapture();
+      });
+  });
+
+  // === STOP CAPTURE BUTTON ===
+  stopCaptureBtn.addEventListener("click", function () {
+    stopCapturing();
+    setStatus("Capture stopped", "warning");
+  });
+
+  // === CANCEL BUTTON ===
+  cancelBtn.addEventListener("click", function () {
+    if (confirm("Cancel registration and clear all captured images?")) {
+      stopCapturing();
+      fetch("/register/cancel", { method: "POST" });
+      resetCapture();
+      showMessage("Registration cancelled", "info");
+    }
+  });
+
+  // === REGISTER FORM SUBMIT ===
+  registerForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    completeRegistration();
+  });
+
+  // === START CAPTURING ===
+  function startCapturing() {
+    isCapturing = true;
+    capturedCount = 0;
     updateProgress(0);
 
-    showMessage("Capturing... Move your head slowly for variety", "info");
+    setStatus("Capturing... Move your head slightly", "primary");
 
-    // Start capturing at intervals
-    captureInterval = setInterval(captureFrame, CAPTURE_INTERVAL);
+    // Capture images at intervals
+    captureInterval = setInterval(captureImage, 400);
   }
 
-  function stopCapture() {
-    isCapturing = false;
+  // === CAPTURE SINGLE IMAGE ===
+  function captureImage() {
+    if (!isCapturing) return;
 
-    if (captureInterval) {
-      clearInterval(captureInterval);
-      captureInterval = null;
-    }
+    fetch("/register/capture_multiple", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ count: 1 }),
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.status === "capturing" || data.status === "completed") {
+          capturedCount = data.captured;
+          updateProgress(capturedCount);
 
-    startCaptureBtn.classList.remove("d-none");
-    stopCaptureBtn.classList.add("d-none");
+          // Flash effect on successful capture
+          flashCapture();
 
-    if (capturedImages.length >= IMAGES_TO_CAPTURE) {
-      registerBtn.disabled = false;
-      showMessage(
-        `✅ Captured ${capturedImages.length} images! Click "Complete Registration" to finish.`,
-        "success"
-      );
-    } else if (capturedImages.length > 0) {
-      showMessage(
-        `Captured ${capturedImages.length}/${IMAGES_TO_CAPTURE} images. You can continue or register with current images.`,
-        "warning"
-      );
-      registerBtn.disabled = false;
-    } else {
-      showMessage("No images captured", "warning");
-    }
-  }
+          // Update status with validation info
+          if (data.validation && data.validation.valid) {
+            setStatus(
+              `Captured ${capturedCount}/${TOTAL_IMAGES} - Good!`,
+              "success"
+            );
+          }
 
-  async function captureFrame() {
-    if (!isCapturing || capturedImages.length >= IMAGES_TO_CAPTURE) {
-      stopCapture();
-      return;
-    }
-
-    const name = personNameInput.value.trim();
-
-    try {
-      const response = await fetch("/register/capture_multiple", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: name,
-          index: capturedImages.length,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        capturedImages.push(data.image);
-        updateProgress(capturedImages.length);
-        updateGrid();
-        flashEffect();
-
-        // Check if we've captured enough
-        if (capturedImages.length >= IMAGES_TO_CAPTURE) {
-          stopCapture();
+          if (data.status === "completed" || capturedCount >= TOTAL_IMAGES) {
+            stopCapturing();
+            setStatus(
+              "Capture complete! Click 'Complete Registration'",
+              "success"
+            );
+            registerBtn.disabled = false;
+          }
+        } else if (data.status === "skipped") {
+          // Show why it was skipped
+          showValidationFeedback(data.validation);
+        } else if (data.status === "error") {
+          setStatus(data.message || "Capture error", "danger");
         }
-      } else if (data.retry) {
-        // Face not detected, continue trying
-        console.log("Retry:", data.error);
-      } else {
-        console.error("Capture error:", data.error);
-      }
-    } catch (error) {
-      console.error("Capture error:", error);
+      })
+      .catch((error) => {
+        console.error("Capture error:", error);
+      });
+  }
+
+  // === SHOW VALIDATION FEEDBACK ===
+  function showValidationFeedback(validation) {
+    if (!validation) return;
+
+    let message = "";
+    if (validation.no_face) {
+      message = "No face detected - look at camera";
+    } else if (validation.blur) {
+      message = "Too blurry - hold still";
+    } else if (validation.brightness === "dark") {
+      message = "Too dark - improve lighting";
+    } else if (validation.brightness === "bright") {
+      message = "Too bright - reduce lighting";
+    } else if (validation.face_size === "small") {
+      message = "Face too small - move closer";
+    } else if (validation.face_size === "large") {
+      message = "Face too close - move back";
+    } else if (validation.error) {
+      message = validation.error;
+    }
+
+    if (message) {
+      setStatus(message, "warning");
     }
   }
 
-  function updateProgress(count) {
-    const percentage = (count / IMAGES_TO_CAPTURE) * 100;
-    progressBar.style.width = `${percentage}%`;
-    progressText.textContent = `${count} / ${IMAGES_TO_CAPTURE}`;
-  }
-
-  function updateGrid() {
-    if (capturedImages.length === 0) {
-      capturedGrid.innerHTML = `
-        <div class="placeholder-box text-center p-4">
-          <span class="placeholder-icon d-block" style="font-size: 3rem;">👤</span>
-          <p class="text-muted mb-0">Captured faces will appear here</p>
-        </div>
-      `;
-      return;
-    }
-
-    // Show last 6 captured images in a grid
-    const imagesToShow = capturedImages.slice(-6);
-    capturedGrid.innerHTML = `
-      <div class="row g-2">
-        ${imagesToShow
-          .map(
-            (img, idx) => `
-          <div class="col-4">
-            <img src="data:image/jpeg;base64,${img}" 
-                 class="img-fluid rounded captured-thumb" 
-                 alt="Capture ${
-                   capturedImages.length - imagesToShow.length + idx + 1
-                 }">
-          </div>
-        `
-          )
-          .join("")}
-      </div>
-      <p class="text-center text-muted mt-2 mb-0">
-        <small>Showing last ${imagesToShow.length} of ${
-      capturedImages.length
-    } captures</small>
-      </p>
-    `;
-  }
-
-  function flashEffect() {
+  // === FLASH EFFECT ===
+  function flashCapture() {
     if (captureFlash) {
       captureFlash.classList.remove("d-none");
+      captureFlash.style.opacity = "0.5";
       setTimeout(() => {
-        captureFlash.classList.add("d-none");
+        captureFlash.style.opacity = "0";
+        setTimeout(() => captureFlash.classList.add("d-none"), 200);
       }, 100);
     }
   }
 
-  async function handleRegister(e) {
-    e.preventDefault();
-
-    const name = personNameInput.value.trim();
-
-    if (!name) {
-      showMessage("Please enter a name", "danger");
-      return;
-    }
-
-    if (capturedImages.length === 0) {
-      showMessage("Please capture some images first", "danger");
-      return;
-    }
-
-    try {
-      registerBtn.disabled = true;
-      registerBtn.innerHTML =
-        '<span class="spinner-border spinner-border-sm me-2"></span>Training model...';
-
-      const response = await fetch("/register/complete_registration", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          name: name,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        showMessage(`✅ ${data.message}`, "success");
-
-        // Reset after success
-        setTimeout(() => {
-          window.location.href = "/";
-        }, 2000);
-      } else {
-        showMessage(data.error || "Registration failed", "danger");
-        registerBtn.disabled = false;
-      }
-    } catch (error) {
-      console.error("Registration error:", error);
-      showMessage("Failed to register face", "danger");
-      registerBtn.disabled = false;
-    } finally {
-      registerBtn.innerHTML =
-        '<span class="me-2">✅</span> Complete Registration';
-    }
+  // === UPDATE PROGRESS ===
+  function updateProgress(count) {
+    const percent = (count / TOTAL_IMAGES) * 100;
+    progressBar.style.width = percent + "%";
+    progressText.textContent = `${count} / ${TOTAL_IMAGES}`;
   }
 
-  function resetForm() {
-    // Stop any ongoing capture
+  // === STOP CAPTURING ===
+  function stopCapturing() {
+    isCapturing = false;
     if (captureInterval) {
       clearInterval(captureInterval);
       captureInterval = null;
     }
-    isCapturing = false;
+    stopCaptureBtn.classList.add("d-none");
+    startCaptureBtn.classList.remove("d-none");
+  }
 
-    // Reset state
-    capturedImages = [];
+  // === COMPLETE REGISTRATION ===
+  function completeRegistration() {
+    setStatus("Training model...", "warning");
+    registerBtn.disabled = true;
+    registerBtn.innerHTML =
+      '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
 
-    // Reset UI
+    fetch("/register/complete", { method: "POST" })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.status === "success") {
+          setStatus("Registration Complete!", "success");
+          showMessage(
+            `<strong>Success!</strong> ${userName} registered with ${data.images_saved} images.
+             <br><a href="/" class="btn btn-primary btn-sm mt-2 me-2">Go to Detection</a>
+             <button class="btn btn-secondary btn-sm mt-2" onclick="location.reload()">Register Another</button>`,
+            "success"
+          );
+          cancelBtn.classList.add("d-none");
+        } else {
+          setStatus("Registration Failed", "danger");
+          showMessage(data.message || "Unknown error", "danger");
+          registerBtn.disabled = false;
+          registerBtn.innerHTML =
+            '<span class="me-2">✅</span> Complete Registration';
+        }
+      })
+      .catch((error) => {
+        console.error("Error:", error);
+        setStatus("Error completing registration", "danger");
+        registerBtn.disabled = false;
+        registerBtn.innerHTML =
+          '<span class="me-2">✅</span> Complete Registration';
+      });
+  }
+
+  // === RESET CAPTURE STATE ===
+  function resetCapture() {
+    stopCapturing();
+    nameInput.disabled = false;
+    nameInput.value = "";
     startCaptureBtn.classList.remove("d-none");
     stopCaptureBtn.classList.add("d-none");
+    cancelBtn.classList.add("d-none");
+    registerBtn.disabled = true;
+    registerBtn.innerHTML =
+      '<span class="me-2">✅</span> Complete Registration';
+    captureStatus.classList.add("d-none");
     progressContainer.classList.add("d-none");
     updateProgress(0);
-    updateGrid();
-
-    personNameInput.value = "";
-    personNameInput.disabled = false;
-    registerBtn.disabled = true;
-    cancelBtn.classList.add("d-none");
-
-    messageArea.innerHTML = "";
-  }
-
-  function showMessage(message, type) {
-    messageArea.innerHTML = `
-      <div class="alert alert-${type} alert-dismissible fade show" role="alert">
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    capturedGrid.innerHTML = `
+      <div class="placeholder-box text-center p-4">
+        <span class="placeholder-icon d-block" style="font-size: 3rem">👤</span>
+        <p class="text-muted mb-0">Captured faces will appear here</p>
       </div>
     `;
-
-    // Auto-dismiss after 5 seconds for non-error messages
-    if (type !== "danger") {
-      setTimeout(() => {
-        const alert = messageArea.querySelector(".alert");
-        if (alert) {
-          alert.classList.remove("show");
-          setTimeout(() => (messageArea.innerHTML = ""), 150);
-        }
-      }, 5000);
-    }
   }
-});
 
-function showMessage(message, type) {
-  messageArea.innerHTML = `
-            <div class="alert alert-${type} alert-dismissible fade show" role="alert">
-                ${message}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        `;
+  // === SET STATUS MESSAGE ===
+  function setStatus(message, type) {
+    statusText.textContent = message;
+    captureStatus.className = `capture-status alert alert-${type} mb-3`;
+    captureStatus.classList.remove("d-none");
+  }
 
-  // Auto-dismiss after 5 seconds
-  setTimeout(() => {
-    const alert = messageArea.querySelector(".alert");
-    if (alert) {
-      alert.classList.remove("show");
-      setTimeout(() => (messageArea.innerHTML = ""), 150);
+  // === SHOW MESSAGE IN MESSAGE AREA ===
+  function showMessage(message, type) {
+    messageArea.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+  }
+
+  // === ENTER KEY TO START ===
+  nameInput.addEventListener("keypress", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      startCaptureBtn.click();
     }
-  }, 5000);
-}
+  });
+});

@@ -1,4 +1,6 @@
 flask>=2.0.0
-opencv-python>=4.5.0
+opencv-contrib-python>=4.5.0
 numpy>=1.20.0
-scikit-learn>=1.0.0
+
+# For Raspberry Pi (optional)
+# picamera2

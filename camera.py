@@ -1,17 +1,65 @@
+"""
+Camera Module - Handles camera operations with OS-specific support
+
+- Windows: Uses standard OpenCV VideoCapture
+- Linux/Raspberry Pi: Uses PiCamera2 if available, falls back to OpenCV
+"""
+
 import cv2
+import platform
+import sys
 from face_detection import detect_face, recognize_face
+
+# Detect operating system
+IS_WINDOWS = platform.system() == 'Windows'
+IS_LINUX = platform.system() == 'Linux'
+IS_RASPBERRY_PI = False
+
+# Check if running on Raspberry Pi
+if IS_LINUX:
+    try:
+        with open('/proc/device-tree/model', 'r') as f:
+            if 'Raspberry Pi' in f.read():
+                IS_RASPBERRY_PI = True
+    except:
+        pass
 
 # Global camera instance
 camera = None
+picamera_available = False
+
+# Try to import picamera2 for Raspberry Pi
+if IS_LINUX:
+    try:
+        from picamera2 import Picamera2
+        picamera_available = True
+        print("PiCamera2 module available", flush=True)
+    except ImportError:
+        print("PiCamera2 not available, using OpenCV", flush=True)
+
+# Face cascade for detection
 face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_alt.xml")
 
 def get_camera():
-    """Get or initialize camera"""
+    """Get or initialize camera based on OS"""
     global camera
-    if camera is None:
-        camera = cv2.VideoCapture(0)
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+    if camera is not None:
+        return camera
+    
+    if IS_RASPBERRY_PI and picamera_available:
+        # Use PiCamera2 for Raspberry Pi
+        try:
+            camera = PiCameraWrapper()
+            print("Using PiCamera2 for Raspberry Pi", flush=True)
+            return camera
+        except Exception as e:
+            print(f"Failed to initialize PiCamera2: {e}", flush=True)
+            print("Falling back to OpenCV", flush=True)
+    
+    # Use OpenCV VideoCapture for Windows or as fallback
+    camera = OpenCVCameraWrapper()
+    print(f"Using OpenCV camera on {platform.system()}", flush=True)
     return camera
 
 def release_camera():
@@ -20,6 +68,59 @@ def release_camera():
     if camera is not None:
         camera.release()
         camera = None
+
+class OpenCVCameraWrapper:
+    """Wrapper for OpenCV VideoCapture"""
+    
+    def __init__(self):
+        self.cap = cv2.VideoCapture(0)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        
+        if not self.cap.isOpened():
+            raise RuntimeError("Could not open camera")
+    
+    def read(self):
+        """Read a frame from the camera"""
+        return self.cap.read()
+    
+    def release(self):
+        """Release the camera"""
+        if self.cap is not None:
+            self.cap.release()
+
+class PiCameraWrapper:
+    """Wrapper for PiCamera2 to provide OpenCV-like interface"""
+    
+    def __init__(self):
+        self.picam2 = Picamera2()
+        
+        # Configure camera for preview
+        config = self.picam2.create_preview_configuration(
+            main={"size": (640, 480), "format": "RGB888"}
+        )
+        self.picam2.configure(config)
+        self.picam2.start()
+    
+    def read(self):
+        """Read a frame from the camera (OpenCV compatible)"""
+        try:
+            # Capture frame as numpy array
+            frame = self.picam2.capture_array()
+            
+            # Convert RGB to BGR for OpenCV compatibility
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            
+            return True, frame_bgr
+        except Exception as e:
+            print(f"PiCamera read error: {e}", flush=True)
+            return False, None
+    
+    def release(self):
+        """Release the camera"""
+        if self.picam2 is not None:
+            self.picam2.stop()
+            self.picam2.close()
 
 def generate_frames():
     """Generate frames from camera (basic - no face detection)"""
@@ -39,9 +140,14 @@ def generate_frames():
 
 def generate_frames_with_detection():
     """
-    Generate frames with face detection and KNN-based recognition.
+    Generate frames with face detection and LBPH-based recognition.
+    Uses smoothing to reduce bounding box jitter.
     """
     cam = get_camera()
+    
+    # Smoothing: store previous face positions for stability
+    prev_faces = {}  # Dictionary to track faces by approximate position
+    smooth_factor = 0.7  # How much to weight previous position (higher = smoother but laggier)
     
     while True:
         success, frame = cam.read()
@@ -51,10 +157,33 @@ def generate_frames_with_detection():
         # Detect faces using the face_detection module
         faces = detect_face(frame)
         
+        current_faces = {}
+        
         # Draw bounding boxes for detected faces
         for (x, y, w, h, face_gray) in faces:
-            # Try to recognize the face using KNN
+            # Try to recognize the face using LBPH
             name, confidence = recognize_face(face_gray)
+            
+            # Create a key based on approximate center position (for tracking)
+            center_x, center_y = x + w // 2, y + h // 2
+            face_key = None
+            
+            # Find matching previous face (within 100 pixels)
+            for key, (px, py, pw, ph, pname) in prev_faces.items():
+                pcx, pcy = px + pw // 2, py + ph // 2
+                if abs(center_x - pcx) < 100 and abs(center_y - pcy) < 100:
+                    face_key = key
+                    # Apply smoothing
+                    x = int(px * smooth_factor + x * (1 - smooth_factor))
+                    y = int(py * smooth_factor + y * (1 - smooth_factor))
+                    w = int(pw * smooth_factor + w * (1 - smooth_factor))
+                    h = int(ph * smooth_factor + h * (1 - smooth_factor))
+                    break
+            
+            if face_key is None:
+                face_key = f"{center_x}_{center_y}"
+            
+            current_faces[face_key] = (x, y, w, h, name)
             
             if name:
                 # Known face - GREEN box
@@ -76,6 +205,9 @@ def generate_frames_with_detection():
             cv2.putText(frame, label, (x + 5, y - 7), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
+        # Update previous faces for next frame
+        prev_faces = current_faces
+        
         # Encode frame as JPEG
         ret, buffer = cv2.imencode('.jpg', frame)
         frame_bytes = buffer.tobytes()
@@ -91,3 +223,12 @@ def capture_frame():
     if success:
         return frame
     return None
+
+def get_camera_info():
+    """Get information about the current camera setup"""
+    return {
+        'os': platform.system(),
+        'is_raspberry_pi': IS_RASPBERRY_PI,
+        'picamera_available': picamera_available,
+        'camera_type': 'PiCamera2' if (IS_RASPBERRY_PI and picamera_available) else 'OpenCV'
+    }

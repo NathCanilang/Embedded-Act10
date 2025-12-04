@@ -3,14 +3,33 @@ import cv2
 import base64
 import numpy as np
 import os
+import shutil
 from datetime import datetime
 from camera import generate_frames, capture_frame, face_cascade
-from face_detection import load_training_data, train_model, get_registered_names, get_person_image_count, delete_person
+from face_detection import (
+    train_model, get_registered_names, 
+    get_person_image_count, delete_person
+)
 
 register_bp = Blueprint('register', __name__)
 
 # Number of images to capture for registration
-IMAGES_TO_CAPTURE = 30
+IMAGES_TO_CAPTURE = 40
+
+# Face validation parameters
+MIN_FACE_SIZE = 80      # Minimum face size in pixels
+MAX_FACE_SIZE = 400     # Maximum face size in pixels
+MIN_BLUR_THRESHOLD = 50 # Minimum Laplacian variance (higher = less blurry)
+MIN_BRIGHTNESS = 40     # Minimum mean brightness
+MAX_BRIGHTNESS = 220    # Maximum mean brightness
+
+# Session storage for registration in progress
+registration_session = {
+    'active': False,
+    'name': '',
+    'captured_count': 0,
+    'images': []
+}
 
 @register_bp.route('/')
 def register_page():
@@ -23,190 +42,272 @@ def video_feed():
     return Response(generate_frames(),
                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
-@register_bp.route('/capture', methods=['POST'])
-def capture():
-    """Capture current frame for registration - returns face crop if detected"""
-    frame = capture_frame()
+@register_bp.route('/start', methods=['POST'])
+def start_registration():
+    """Start a new registration session"""
+    global registration_session
     
-    if frame is not None:
-        # Detect face in frame
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-        
-        if len(faces) == 0:
-            return jsonify({'success': False, 'error': 'No face detected'})
-        
-        if len(faces) > 1:
-            return jsonify({'success': False, 'error': 'Multiple faces detected. Please ensure only one face is visible.'})
-        
-        # Get face region
-        x, y, w, h = faces[0]
-        
-        # Add some padding around the face
-        padding = 20
-        x1 = max(0, x - padding)
-        y1 = max(0, y - padding)
-        x2 = min(frame.shape[1], x + w + padding)
-        y2 = min(frame.shape[0], y + h + padding)
-        
-        face_crop = frame[y1:y2, x1:x2]
-        
-        # Convert to base64
-        ret, buffer = cv2.imencode('.jpg', face_crop)
-        img_base64 = base64.b64encode(buffer).decode('utf-8')
-        
-        return jsonify({
-            'success': True, 
-            'image': img_base64,
-            'face_detected': True
-        })
+    data = request.json
+    name = data.get('name', '').strip()
     
-    return jsonify({'success': False, 'error': 'Failed to capture frame'})
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Name is required'})
+    
+    # Reset session
+    registration_session = {
+        'active': True,
+        'name': name,
+        'captured_count': 0,
+        'images': []
+    }
+    
+    print(f"Started registration for: {name}")
+    return jsonify({'status': 'started', 'name': name, 'total': IMAGES_TO_CAPTURE})
 
 @register_bp.route('/capture_multiple', methods=['POST'])
 def capture_multiple():
-    """Capture a single frame during multi-capture registration"""
-    data = request.json
-    name = data.get('name', '').strip()
-    capture_index = data.get('index', 0)
+    """Capture images during registration with validation"""
+    global registration_session
     
-    if not name:
-        return jsonify({'success': False, 'error': 'Name is required'})
+    if not registration_session['active']:
+        return jsonify({'status': 'error', 'message': 'No active registration session'})
+    
+    if registration_session['captured_count'] >= IMAGES_TO_CAPTURE:
+        return jsonify({
+            'status': 'completed',
+            'captured': registration_session['captured_count'],
+            'total': IMAGES_TO_CAPTURE
+        })
     
     frame = capture_frame()
     
     if frame is None:
-        return jsonify({'success': False, 'error': 'Failed to capture frame'})
+        return jsonify({
+            'status': 'skipped',
+            'validation': {'error': 'Failed to capture frame'},
+            'captured': registration_session['captured_count']
+        })
     
     # Detect face in frame
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray_equalized = cv2.equalizeHist(gray)
+    
     faces = face_cascade.detectMultiScale(
-        gray,
+        gray_equalized,
         scaleFactor=1.1,
         minNeighbors=5,
         minSize=(30, 30)
     )
     
+    # Validation checks
+    validation = {'valid': True}
+    
     if len(faces) == 0:
-        return jsonify({'success': False, 'error': 'No face detected', 'retry': True})
+        validation = {'valid': False, 'no_face': True}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
     
     if len(faces) > 1:
-        return jsonify({'success': False, 'error': 'Multiple faces detected', 'retry': True})
+        validation = {'valid': False, 'error': 'Multiple faces'}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
     
+    # Get face dimensions
+    x, y, w, h = faces[0]
+    face_size = max(w, h)
+    
+    # Check face size
+    if face_size < MIN_FACE_SIZE:
+        validation = {'valid': False, 'face_size': 'small'}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
+    
+    if face_size > MAX_FACE_SIZE:
+        validation = {'valid': False, 'face_size': 'large'}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
+    
+    # Extract face region for quality checks
+    face_gray = gray[y:y+h, x:x+w]
+    
+    # Check blur (Laplacian variance)
+    laplacian_var = cv2.Laplacian(face_gray, cv2.CV_64F).var()
+    if laplacian_var < MIN_BLUR_THRESHOLD:
+        validation = {'valid': False, 'blur': True}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
+    
+    # Check brightness
+    mean_brightness = np.mean(face_gray)
+    if mean_brightness < MIN_BRIGHTNESS:
+        validation = {'valid': False, 'brightness': 'dark'}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
+    
+    if mean_brightness > MAX_BRIGHTNESS:
+        validation = {'valid': False, 'brightness': 'bright'}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
+    
+    # Check face is reasonably centered
+    frame_height, frame_width = frame.shape[:2]
+    face_center_x = x + w // 2
+    face_center_y = y + h // 2
+    margin = 0.1
+    
+    if (face_center_x < frame_width * margin or 
+        face_center_x > frame_width * (1 - margin) or
+        face_center_y < frame_height * margin or 
+        face_center_y > frame_height * (1 - margin)):
+        validation = {'valid': False, 'error': 'Face at edge'}
+        return jsonify({
+            'status': 'skipped',
+            'validation': validation,
+            'captured': registration_session['captured_count']
+        })
+    
+    # === IMAGE IS VALID - SAVE IT ===
     try:
-        # Create person's folder
+        name = registration_session['name']
         known_faces_dir = current_app.config.get('KNOWN_FACES_DIR', 'known_faces')
         person_dir = os.path.join(known_faces_dir, name)
         
         if not os.path.exists(person_dir):
             os.makedirs(person_dir)
         
-        # Get face region with padding
-        x, y, w, h = faces[0]
+        # Get face with padding
         padding = 20
         x1 = max(0, x - padding)
         y1 = max(0, y - padding)
         x2 = min(frame.shape[1], x + w + padding)
         y2 = min(frame.shape[0], y + h + padding)
-        
         face_crop = frame[y1:y2, x1:x2]
         
         # Save image
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"{capture_index:03d}_{timestamp}.jpg"
+        idx = registration_session['captured_count']
+        filename = f"{idx:03d}_{timestamp}.jpg"
         filepath = os.path.join(person_dir, filename)
         cv2.imwrite(filepath, face_crop)
         
-        # Convert to base64 for preview
-        ret, buffer = cv2.imencode('.jpg', face_crop)
-        img_base64 = base64.b64encode(buffer).decode('utf-8')
+        registration_session['captured_count'] += 1
+        registration_session['images'].append(filepath)
+        
+        captured = registration_session['captured_count']
+        
+        # Check if completed
+        if captured >= IMAGES_TO_CAPTURE:
+            return jsonify({
+                'status': 'completed',
+                'captured': captured,
+                'total': IMAGES_TO_CAPTURE,
+                'validation': {'valid': True}
+            })
         
         return jsonify({
-            'success': True,
-            'image': img_base64,
-            'index': capture_index,
-            'filename': filename
+            'status': 'capturing',
+            'captured': captured,
+            'total': IMAGES_TO_CAPTURE,
+            'validation': {'valid': True}
         })
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@register_bp.route('/complete_registration', methods=['POST'])
-def complete_registration():
-    """Complete registration and retrain the model"""
-    data = request.json
-    name = data.get('name', '').strip()
-    
-    if not name:
-        return jsonify({'success': False, 'error': 'Name is required'})
-    
-    # Check if person has enough images
-    image_count = get_person_image_count(name)
-    
-    if image_count < IMAGES_TO_CAPTURE:
         return jsonify({
-            'success': False, 
-            'error': f'Not enough images. Captured {image_count}/{IMAGES_TO_CAPTURE}'
+            'status': 'error',
+            'message': str(e),
+            'captured': registration_session['captured_count']
+        })
+
+@register_bp.route('/complete', methods=['POST'])
+def complete_registration():
+    """Complete registration and train the model"""
+    global registration_session
+    
+    if not registration_session['active']:
+        return jsonify({'status': 'error', 'message': 'No active registration session'})
+    
+    name = registration_session['name']
+    captured = registration_session['captured_count']
+    
+    if captured < IMAGES_TO_CAPTURE:
+        return jsonify({
+            'status': 'error',
+            'message': f'Not enough images. Captured {captured}/{IMAGES_TO_CAPTURE}'
         })
     
     try:
-        # Retrain the model with new data
-        print(f"Retraining model after registering {name}...")
-        load_training_data()
+        # Train the model with new data
+        print(f"Training model after registering {name} with {captured} images...")
         train_model()
         
+        # Reset session
+        registration_session = {
+            'active': False,
+            'name': '',
+            'captured_count': 0,
+            'images': []
+        }
+        
         return jsonify({
-            'success': True,
-            'message': f'Successfully registered {name} with {image_count} images',
-            'image_count': image_count
+            'status': 'success',
+            'message': f'Successfully registered {name}',
+            'images_saved': captured
         })
+        
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'status': 'error', 'message': str(e)})
 
-@register_bp.route('/save', methods=['POST'])
-def save_face():
-    """Save a captured face with name (legacy single-image endpoint)"""
-    data = request.json
-    name = data.get('name', '').strip()
-    image_data = data.get('image', '')
+@register_bp.route('/cancel', methods=['POST'])
+def cancel_registration():
+    """Cancel the current registration session"""
+    global registration_session
     
-    if not name:
-        return jsonify({'success': False, 'error': 'Name is required'})
+    if registration_session['active']:
+        name = registration_session['name']
+        
+        # Optionally delete captured images
+        try:
+            known_faces_dir = current_app.config.get('KNOWN_FACES_DIR', 'known_faces')
+            person_dir = os.path.join(known_faces_dir, name)
+            if os.path.exists(person_dir):
+                # Only delete if it was just created (has few images)
+                count = get_person_image_count(name)
+                if count <= IMAGES_TO_CAPTURE:
+                    shutil.rmtree(person_dir)
+                    print(f"Deleted incomplete registration for {name}")
+        except Exception as e:
+            print(f"Error cleaning up: {e}")
     
-    if not image_data:
-        return jsonify({'success': False, 'error': 'Image is required'})
+    # Reset session
+    registration_session = {
+        'active': False,
+        'name': '',
+        'captured_count': 0,
+        'images': []
+    }
     
-    try:
-        # Decode base64 image
-        img_bytes = base64.b64decode(image_data)
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        # Create person's folder
-        known_faces_dir = current_app.config.get('KNOWN_FACES_DIR', 'known_faces')
-        person_dir = os.path.join(known_faces_dir, name)
-        
-        if not os.path.exists(person_dir):
-            os.makedirs(person_dir)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}.jpg"
-        filepath = os.path.join(person_dir, filename)
-        cv2.imwrite(filepath, img)
-        
-        return jsonify({
-            'success': True, 
-            'message': f'Saved image for {name}',
-            'filename': filename
-        })
-    
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+    return jsonify({'status': 'cancelled'})
 
 @register_bp.route('/list')
 def list_faces():

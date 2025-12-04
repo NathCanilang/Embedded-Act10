@@ -17,18 +17,47 @@ document.addEventListener("DOMContentLoaded", function () {
   init();
 
   function init() {
-    // Handle video feed loading
-    videoFeed.onload = function () {
-      videoOverlay.classList.add("hidden");
-      setStatus("active", "Camera Active");
-    };
+    // Handle video feed loading - MJPEG streams don't fire onload reliably
+    let streamStarted = false;
+
+    function hideOverlay() {
+      if (!streamStarted) {
+        streamStarted = true;
+        // Use both class and direct style to ensure it hides
+        videoOverlay.classList.add("hidden");
+        videoOverlay.style.display = "none";
+        setStatus("active", "Camera Active");
+        console.log("Camera stream started - overlay hidden");
+      }
+    }
+
+    // Method 1: Check if video feed has natural dimensions (stream started)
+    function checkStreamReady() {
+      if (videoFeed.naturalWidth > 0 && videoFeed.naturalHeight > 0) {
+        hideOverlay();
+        return;
+      }
+      if (!streamStarted) {
+        setTimeout(checkStreamReady, 200);
+      }
+    }
+
+    // Method 2: Hide after reasonable timeout (fallback)
+    setTimeout(() => {
+      hideOverlay();
+    }, 3000);
+
+    // Start checking immediately
+    checkStreamReady();
 
     videoFeed.onerror = function () {
-      videoOverlay.innerHTML = `
+      if (!streamStarted) {
+        videoOverlay.innerHTML = `
                 <span style="font-size: 2rem;">❌</span>
                 <p class="mt-2">Camera Error - Please check your camera</p>
             `;
-      setStatus("error", "Camera Error");
+        setStatus("error", "Camera Error");
+      }
     };
 
     // Load registered faces and model status

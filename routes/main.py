@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, Response, jsonify
 from camera import generate_frames_with_detection, release_camera
-from face_detection import load_training_data, train_model, load_model, get_registered_names, knn_model
+from face_detection import train_model, load_model, get_registered_names, get_model_info
 
 main_bp = Blueprint('main', __name__)
 
@@ -24,8 +24,7 @@ def reload_model():
             return jsonify({'success': True, 'message': 'Model reloaded from file'})
         
         # If no saved model, retrain
-        if load_training_data():
-            train_model()
+        if train_model():
             return jsonify({'success': True, 'message': 'Model retrained'})
         
         return jsonify({'success': False, 'error': 'No training data available'})
@@ -35,13 +34,13 @@ def reload_model():
 @main_bp.route('/model_status')
 def model_status():
     """Check the status of the face recognition model"""
-    from face_detection import knn_model, face_encodings, face_labels
+    info = get_model_info()
     
     return jsonify({
-        'model_loaded': knn_model is not None,
-        'num_encodings': len(face_encodings),
-        'registered_names': get_registered_names(),
-        'labels': list(set(face_labels)) if face_labels else []
+        'model_loaded': info['model_loaded'],
+        'num_people': info['num_people'],
+        'num_encodings': info['num_people'],  # For compatibility
+        'registered_names': info['registered_names']
     })
 
 @main_bp.route('/close_cam')
