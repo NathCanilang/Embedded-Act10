@@ -47,26 +47,22 @@ def detect_face(frame):
     """
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    # Apply bilateral filter to reduce noise while keeping edges
-    gray = cv2.bilateralFilter(gray, 5, 75, 75)
-    
     # Equalize histogram for better detection in varying lighting
-    gray = cv2.equalizeHist(gray)
+    gray_eq = cv2.equalizeHist(gray)
     
-    # Use more stable detection parameters
-    # - Higher minNeighbors (7) reduces false positives and flickering
-    # - Larger minSize (50x50) ignores small false detections
-    # - scaleFactor 1.05 for finer scale pyramid (more stable but slower)
+    # Detect faces on equalized image
     faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.05,
-        minNeighbors=7,
-        minSize=(50, 50),
+        gray_eq,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(40, 40),
         flags=cv2.CASCADE_SCALE_IMAGE
     )
     
     result = []
     for (x, y, w, h) in faces:
+        # Extract face from original gray (not equalized) for recognition
+        # Recognition will handle equalization consistently with training
         face_gray = gray[y:y+h, x:x+w]
         result.append((x, y, w, h, face_gray))
     
@@ -152,16 +148,18 @@ def load_training_data():
             image_path = os.path.join(person_dir, image_name)
             
             try:
-                # Load image in grayscale
+                # Load image in grayscale (already saved as 100x100 grayscale)
                 img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
                 if img is None:
+                    print(f"  Failed to load: {image_path}", flush=True)
                     continue
                 
-                # Resize to standard size for LBPH
-                img_resized = cv2.resize(img, (100, 100))
+                # Verify size and resize if needed (for compatibility with old images)
+                if img.shape != (100, 100):
+                    img = cv2.resize(img, (100, 100))
                 
-                # Equalize histogram
-                img_equalized = cv2.equalizeHist(img_resized)
+                # Equalize histogram for consistent lighting
+                img_equalized = cv2.equalizeHist(img)
                 
                 faces.append(img_equalized)
                 labels.append(person_label)
@@ -270,29 +268,39 @@ def recognize_face(face_gray):
         return None, 0
     
     try:
-        # Resize and equalize for consistency
+        # Resize to 100x100 to match training data
         face_resized = cv2.resize(face_gray, (100, 100))
+        
+        # Equalize histogram (same as training)
         face_equalized = cv2.equalizeHist(face_resized)
         
+        # Verify input is correct format
+        if face_equalized.dtype != np.uint8:
+            face_equalized = face_equalized.astype(np.uint8)
+        
         # Predict using LBPH
-        label, confidence = lbph_recognizer.predict(face_equalized)
+        label, distance = lbph_recognizer.predict(face_equalized)
         
-        # LBPH confidence is actually distance - lower is better
-        # Convert to percentage (0-100 distance maps to 100%-0% confidence)
-        confidence_percent = max(0, (100 - confidence) / 100)
+        # LBPH returns distance - lower is better match
+        # Typical good match: < 50, acceptable: 50-80, poor: > 80
         
-        print(f"Recognition: label={label}, distance={confidence:.2f}, conf={confidence_percent:.0%}", flush=True)
+        # Convert distance to confidence percentage for display
+        # Cap distance at 100 for percentage calculation
+        confidence_percent = max(0, min(100, 100 - distance)) / 100
         
-        # Check if confidence is good enough (distance below threshold)
-        if confidence < RECOGNITION_THRESHOLD:
+        # Check if match is good enough
+        if distance < RECOGNITION_THRESHOLD:
             name = label_to_name.get(label, "Unknown")
+            print(f"Recognition: {name} (label={label}, distance={distance:.1f})", flush=True)
             return name, confidence_percent
         else:
-            print(f"  -> Rejected as Unknown (distance {confidence:.2f} > threshold {RECOGNITION_THRESHOLD})", flush=True)
+            print(f"Recognition: Unknown (distance={distance:.1f} > threshold={RECOGNITION_THRESHOLD})", flush=True)
             return None, confidence_percent
             
     except Exception as e:
         print(f"Recognition error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         return None, 0
 
 def get_registered_names():

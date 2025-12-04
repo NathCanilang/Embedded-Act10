@@ -273,20 +273,19 @@ def capture_multiple():
         if not os.path.exists(person_dir):
             os.makedirs(person_dir)
         
-        # Get face with padding
-        padding = 20
-        x1 = max(0, x - padding)
-        y1 = max(0, y - padding)
-        x2 = min(frame.shape[1], x + w + padding)
-        y2 = min(frame.shape[0], y + h + padding)
-        face_crop = frame[y1:y2, x1:x2]
+        # Extract face region (grayscale, no padding - exact face bbox)
+        # This ensures consistency with how LBPH training loads images
+        face_gray_crop = gray[y:y+h, x:x+w]
         
-        # Save image
+        # Resize to standard size for LBPH (100x100)
+        face_resized = cv2.resize(face_gray_crop, (100, 100))
+        
+        # Save grayscale image
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         idx = registration_session['captured_count']
         filename = f"{idx:03d}_{timestamp}.jpg"
         filepath = os.path.join(person_dir, filename)
-        cv2.imwrite(filepath, face_crop)
+        cv2.imwrite(filepath, face_resized)
         
         registration_session['captured_count'] += 1
         registration_session['images'].append(filepath)
