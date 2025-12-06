@@ -32,6 +32,31 @@ document.addEventListener("DOMContentLoaded", function () {
   let capturedImages = [];
   let gesturePollingInterval = null;
   let sessionStarted = false;
+  let updateMode = false; // Flag for update mode
+
+  // Check for update parameter in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const updateName = urlParams.get("update");
+
+  if (updateName) {
+    updateMode = true;
+    userName = updateName;
+    nameInput.value = updateName;
+    nameInput.disabled = true; // Don't allow changing name in update mode
+    showMessage(
+      `📷 Update mode: Capturing new images for "${updateName}"`,
+      "info"
+    );
+
+    // Update page title
+    const pageHeader = document.querySelector("h2.text-primary");
+    if (pageHeader) {
+      pageHeader.innerHTML = '<span class="me-2">📷</span> Update Face Images';
+    }
+
+    // Update button text
+    startCaptureBtn.innerHTML = `<span class="me-2">📸</span> Start Update Capture (${TOTAL_IMAGES} images)`;
+  }
 
   // === HIDE SPINNER WHEN CAMERA IS READY ===
   let streamStarted = false;
@@ -187,20 +212,25 @@ document.addEventListener("DOMContentLoaded", function () {
     capturedGrid.innerHTML =
       '<p class="text-muted text-center">Capturing...</p>';
 
-    // Start registration on server
-    fetch("/register/start", {
+    // Determine endpoint based on mode
+    const endpoint = updateMode
+      ? `/register/update/${encodeURIComponent(userName)}`
+      : "/register/start";
+
+    const requestBody = updateMode ? {} : { name: userName };
+
+    // Start registration/update on server
+    fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: userName }),
+      body: JSON.stringify(requestBody),
     })
       .then((response) => response.json())
       .then((data) => {
         if (data.status === "started") {
           sessionStarted = true;
-          setStatus(
-            "👍 Show Thumbs Up to capture, or wait for auto-capture",
-            "info"
-          );
+          const modeText = updateMode ? "update" : "registration";
+          setStatus(`👍 Show Thumbs Up to capture (${modeText} mode)`, "info");
           setTimeout(startCapturing, 1000);
         } else {
           showMessage(
@@ -364,28 +394,45 @@ document.addEventListener("DOMContentLoaded", function () {
       .then((response) => response.json())
       .then((data) => {
         if (data.status === "success") {
-          setStatus("Registration Complete!", "success");
+          const actionText = updateMode ? "updated" : "registered";
+          setStatus(
+            `${updateMode ? "Update" : "Registration"} Complete!`,
+            "success"
+          );
           showMessage(
-            `<strong>Success!</strong> ${userName} registered with ${data.images_saved} images.
+            `<strong>Success!</strong> ${userName} ${actionText} with ${data.images_saved} images.
              <br><a href="/" class="btn btn-primary btn-sm mt-2 me-2">Go to Detection</a>
-             <button class="btn btn-secondary btn-sm mt-2" onclick="location.reload()">Register Another</button>`,
+             <button class="btn btn-secondary btn-sm mt-2" onclick="window.location.href='/register'">Register Another</button>`,
             "success"
           );
           cancelBtn.classList.add("d-none");
+
+          // Clear the update parameter from URL after success
+          if (updateMode) {
+            window.history.replaceState({}, document.title, "/register");
+          }
         } else {
-          setStatus("Registration Failed", "danger");
+          setStatus(
+            `${updateMode ? "Update" : "Registration"} Failed`,
+            "danger"
+          );
           showMessage(data.message || "Unknown error", "danger");
           registerBtn.disabled = false;
-          registerBtn.innerHTML =
-            '<span class="me-2">✅</span> Complete Registration';
+          registerBtn.innerHTML = `<span class="me-2">✅</span> Complete ${
+            updateMode ? "Update" : "Registration"
+          }`;
         }
       })
       .catch((error) => {
         console.error("Error:", error);
-        setStatus("Error completing registration", "danger");
+        setStatus(
+          `Error completing ${updateMode ? "update" : "registration"}`,
+          "danger"
+        );
         registerBtn.disabled = false;
-        registerBtn.innerHTML =
-          '<span class="me-2">✅</span> Complete Registration';
+        registerBtn.innerHTML = `<span class="me-2">✅</span> Complete ${
+          updateMode ? "Update" : "Registration"
+        }`;
       });
   }
 
@@ -393,14 +440,20 @@ document.addEventListener("DOMContentLoaded", function () {
   function resetCapture() {
     stopCapturing();
     sessionStarted = false;
-    nameInput.disabled = false;
-    nameInput.value = "";
+
+    // Only reset name input if not in update mode
+    if (!updateMode) {
+      nameInput.disabled = false;
+      nameInput.value = "";
+    }
+
     startCaptureBtn.classList.remove("d-none");
     stopCaptureBtn.classList.add("d-none");
     cancelBtn.classList.add("d-none");
     registerBtn.disabled = true;
-    registerBtn.innerHTML =
-      '<span class="me-2">✅</span> Complete Registration';
+    registerBtn.innerHTML = `<span class="me-2">✅</span> Complete ${
+      updateMode ? "Update" : "Registration"
+    }`;
     captureStatus.classList.add("d-none");
     progressContainer.classList.add("d-none");
     updateProgress(0);

@@ -83,15 +83,21 @@
   flex-grow: 1;
 }
 
-.delete-face-btn {
-  padding: 4px 8px;
-  font-size: 0.8rem;
+.face-actions {
+  display: flex;
+  gap: 4px;
   opacity: 0;
   transition: opacity 0.2s ease;
 }
 
-.face-item:hover .delete-face-btn {
+.face-item:hover .face-actions {
   opacity: 1;
+}
+
+.update-face-btn,
+.delete-face-btn {
+  padding: 4px 8px;
+  font-size: 0.8rem;
 }
 
 .no-faces-message {

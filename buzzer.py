@@ -3,7 +3,7 @@ Buzzer Module - Handles GPIO buzzer for alert notifications
 
 - Buzzer connected to GPIO 23
 - Activates when an unregistered face is detected
-- Only works on Raspberry Pi, silently skips on Windows
+- Only works on Linux/Raspberry Pi, completely disabled on Windows
 """
 
 import platform
@@ -11,6 +11,7 @@ import threading
 import time
 
 # Detect operating system
+IS_WINDOWS = platform.system() == 'Windows'
 IS_LINUX = platform.system() == 'Linux'
 IS_RASPBERRY_PI = False
 
@@ -23,11 +24,12 @@ if IS_LINUX:
     except:
         pass
 
-# GPIO setup
+# GPIO setup - ONLY on Linux/Raspberry Pi
 GPIO_AVAILABLE = False
 BUZZER_PIN = 23
+BUZZER_ENABLED = IS_LINUX  # Only enable buzzer functionality on Linux
 
-if IS_RASPBERRY_PI:
+if IS_LINUX:
     try:
         import RPi.GPIO as GPIO
         GPIO.setmode(GPIO.BCM)
@@ -41,7 +43,8 @@ if IS_RASPBERRY_PI:
     except Exception as e:
         print(f"Failed to initialize GPIO: {e}", flush=True)
 else:
-    print(f"Not running on Raspberry Pi - buzzer simulation mode", flush=True)
+    # Windows - buzzer completely disabled, no simulation
+    print(f"Running on {platform.system()} - buzzer disabled (Linux/RPi only)", flush=True)
 
 # Buzzer state
 buzzer_active = False
@@ -53,11 +56,19 @@ BUZZ_COOLDOWN = 2.0  # Minimum seconds between buzzes
 def activate_buzzer(duration=0.5):
     """
     Activate the buzzer for a specified duration.
+    Only works on Linux/Raspberry Pi - silently does nothing on Windows.
     
     Args:
         duration: How long to buzz in seconds (default 0.5)
+    
+    Returns:
+        True if buzzer was activated, False otherwise
     """
     global buzzer_active, last_buzz_time
+    
+    # Skip entirely on non-Linux systems
+    if not BUZZER_ENABLED:
+        return False
     
     current_time = time.time()
     
@@ -79,10 +90,7 @@ def activate_buzzer(duration=0.5):
                 GPIO.output(BUZZER_PIN, GPIO.HIGH)
                 time.sleep(duration)
                 GPIO.output(BUZZER_PIN, GPIO.LOW)
-            else:
-                # Simulation mode - just print
-                print(f"🔔 BUZZER: Unknown face detected! (simulated {duration}s buzz)", flush=True)
-                time.sleep(duration)
+                print(f"🔔 BUZZER: Alert triggered ({duration}s)", flush=True)
         finally:
             with buzzer_lock:
                 buzzer_active = False
@@ -112,6 +120,8 @@ def get_buzzer_status():
     return {
         'gpio_available': GPIO_AVAILABLE,
         'is_raspberry_pi': IS_RASPBERRY_PI,
+        'is_linux': IS_LINUX,
+        'buzzer_enabled': BUZZER_ENABLED,
         'buzzer_pin': BUZZER_PIN,
-        'simulation_mode': not GPIO_AVAILABLE
+        'platform': platform.system()
     }

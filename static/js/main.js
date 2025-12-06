@@ -227,15 +227,16 @@ document.addEventListener("DOMContentLoaded", function () {
       const data = await response.json();
 
       if (buzzerStatus) {
-        if (data.gpio_available) {
+        if (data.buzzer_enabled && data.gpio_available) {
           buzzerStatus.textContent = "🔔 Buzzer Active";
           buzzerStatus.className = "ms-2 badge bg-success";
-        } else if (data.simulation_mode) {
-          buzzerStatus.textContent = "🔔 Simulated";
+        } else if (data.buzzer_enabled) {
+          buzzerStatus.textContent = "🔔 GPIO N/A";
           buzzerStatus.className = "ms-2 badge bg-warning text-dark";
         } else {
           buzzerStatus.textContent = "🔕 Buzzer Off";
           buzzerStatus.className = "ms-2 badge bg-secondary";
+          buzzerStatus.title = `Buzzer disabled on ${data.platform}`;
         }
       }
     } catch (error) {
@@ -298,11 +299,19 @@ document.addEventListener("DOMContentLoaded", function () {
                               .charAt(0)
                               .toUpperCase()}</div>
                             <span class="face-name">${name}</span>
-                            <button class="btn btn-sm btn-outline-danger delete-face-btn" data-name="${name}" title="Delete">🗑️</button>
+                            <div class="face-actions">
+                              <button class="btn btn-sm btn-outline-primary update-face-btn" data-name="${name}" title="Update Images">📷</button>
+                              <button class="btn btn-sm btn-outline-danger delete-face-btn" data-name="${name}" title="Delete">🗑️</button>
+                            </div>
                         </div>
                     `
             )
             .join("");
+
+          // Add update event listeners
+          document.querySelectorAll(".update-face-btn").forEach((btn) => {
+            btn.addEventListener("click", () => updateFace(btn.dataset.name));
+          });
 
           // Add delete event listeners
           document.querySelectorAll(".delete-face-btn").forEach((btn) => {
@@ -327,6 +336,19 @@ document.addEventListener("DOMContentLoaded", function () {
                     </div>
                 `;
       });
+  }
+
+  async function updateFace(name) {
+    if (
+      !confirm(
+        `Update images for "${name}"?\n\nThis will delete the current images and require capturing new ones.`
+      )
+    ) {
+      return;
+    }
+
+    // Redirect to register page with update parameter
+    window.location.href = `/register?update=${encodeURIComponent(name)}`;
   }
 
   async function deleteFace(name) {

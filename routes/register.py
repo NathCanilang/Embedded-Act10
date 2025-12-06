@@ -417,3 +417,43 @@ def delete_face(name):
         return jsonify({'success': True, 'message': f'Deleted {name}'})
     else:
         return jsonify({'success': False, 'error': f'Failed to delete {name}'})
+
+
+@register_bp.route('/update/<name>', methods=['POST'])
+def start_update_registration(name):
+    """Start updating images for an existing registered user"""
+    global registration_session
+    
+    if not name:
+        return jsonify({'status': 'error', 'message': 'Name is required'})
+    
+    # Check if user exists
+    existing_names = get_registered_names()
+    if name not in existing_names:
+        return jsonify({'status': 'error', 'message': f'User "{name}" not found'})
+    
+    # Delete existing images for this user
+    known_faces_dir = current_app.config.get('KNOWN_FACES_DIR', 'known_faces')
+    person_dir = os.path.join(known_faces_dir, name)
+    
+    try:
+        if os.path.exists(person_dir):
+            shutil.rmtree(person_dir)
+            print(f"Cleared existing images for: {name}")
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Failed to clear existing images: {str(e)}'})
+    
+    # Reset session with gesture support for update mode
+    registration_session = {
+        'active': True,
+        'name': name,
+        'captured_count': 0,
+        'images': [],
+        'gesture_capture_enabled': True,
+        'last_gesture': None,
+        'last_gesture_time': 0,
+        'update_mode': True  # Flag to indicate this is an update
+    }
+    
+    print(f"Started image update for: {name}")
+    return jsonify({'status': 'started', 'name': name, 'total': IMAGES_TO_CAPTURE, 'update_mode': True})
