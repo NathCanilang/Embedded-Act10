@@ -1,6 +1,6 @@
 /**
  * Main page JavaScript
- * Handles the face detection view
+ * Handles the face detection view, notifications, and detection events
  */
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -8,10 +8,18 @@ document.addEventListener("DOMContentLoaded", function () {
   const videoOverlay = document.getElementById("video-overlay");
   const statusIndicator = document.getElementById("status-indicator");
   const statusText = document.getElementById("status-text");
+  const buzzerStatus = document.getElementById("buzzer-status");
   const refreshFacesBtn = document.getElementById("refresh-faces-btn");
   const reloadModelBtn = document.getElementById("reload-model-btn");
   const registeredFacesList = document.getElementById("registered-faces-list");
   const modelStatus = document.getElementById("model-status");
+  const detectionLog = document.getElementById("detection-log");
+  const clearLogBtn = document.getElementById("clear-log-btn");
+  const toastContainer = document.getElementById("toast-container");
+
+  // Track last event timestamp
+  let lastEventTimestamp = Date.now() / 1000;
+  let eventPollingInterval = null;
 
   // Initialize
   init();
@@ -63,6 +71,10 @@ document.addEventListener("DOMContentLoaded", function () {
     // Load registered faces and model status
     loadRegisteredFaces();
     loadModelStatus();
+    loadBuzzerStatus();
+
+    // Start polling for detection events
+    startEventPolling();
 
     // Refresh button
     if (refreshFacesBtn) {
@@ -76,6 +88,11 @@ document.addEventListener("DOMContentLoaded", function () {
     if (reloadModelBtn) {
       reloadModelBtn.addEventListener("click", reloadModel);
     }
+
+    // Clear log button
+    if (clearLogBtn) {
+      clearLogBtn.addEventListener("click", clearDetectionLog);
+    }
   }
 
   function setStatus(type, text) {
@@ -84,6 +101,149 @@ document.addEventListener("DOMContentLoaded", function () {
       type === "active" ? "#198754" : "#dc3545";
   }
 
+  // === DETECTION EVENT POLLING ===
+  function startEventPolling() {
+    // Poll every 1 second for new events
+    eventPollingInterval = setInterval(pollDetectionEvents, 1000);
+  }
+
+  async function pollDetectionEvents() {
+    try {
+      const response = await fetch(
+        `/detection_events?since=${lastEventTimestamp}`
+      );
+      const data = await response.json();
+
+      if (data.events && data.events.length > 0) {
+        data.events.forEach((event) => {
+          // Update last timestamp
+          if (event.timestamp > lastEventTimestamp) {
+            lastEventTimestamp = event.timestamp;
+          }
+
+          // Show notification toast
+          showNotificationToast(event);
+
+          // Add to detection log
+          addToDetectionLog(event);
+        });
+      }
+    } catch (error) {
+      console.error("Error polling detection events:", error);
+    }
+  }
+
+  function showNotificationToast(event) {
+    const isRecognized = event.type === "recognized";
+    const toastId = `toast-${Date.now()}`;
+    const time = new Date(event.timestamp * 1000).toLocaleTimeString();
+
+    const toastHtml = `
+      <div id="${toastId}" class="toast" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="5000">
+        <div class="toast-header ${
+          isRecognized ? "bg-success" : "bg-danger"
+        } text-white">
+          <strong class="me-auto">${
+            isRecognized ? "✅ Face Recognized" : "🔔 Unknown Face!"
+          }</strong>
+          <small>${time}</small>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+        <div class="toast-body ${
+          isRecognized ? "bg-success-subtle" : "bg-danger-subtle"
+        }">
+          ${
+            isRecognized
+              ? `<strong>${event.name}</strong> detected (${Math.round(
+                  event.confidence * 100
+                )}% confidence)`
+              : "<strong>Unregistered person detected!</strong> Buzzer activated."
+          }
+        </div>
+      </div>
+    `;
+
+    toastContainer.insertAdjacentHTML("beforeend", toastHtml);
+
+    const toastElement = document.getElementById(toastId);
+    const toast = new bootstrap.Toast(toastElement);
+    toast.show();
+
+    // Remove toast element after it's hidden
+    toastElement.addEventListener("hidden.bs.toast", () => {
+      toastElement.remove();
+    });
+  }
+
+  function addToDetectionLog(event) {
+    const isRecognized = event.type === "recognized";
+    const time = new Date(event.timestamp * 1000).toLocaleTimeString();
+
+    // Clear the "no detections" message if present
+    if (detectionLog.querySelector(".text-muted")) {
+      detectionLog.innerHTML = "";
+    }
+
+    const logEntry = document.createElement("div");
+    logEntry.className = `detection-entry small p-1 mb-1 rounded ${
+      isRecognized ? "bg-success-subtle" : "bg-danger-subtle"
+    }`;
+    logEntry.innerHTML = `
+      <span class="badge ${
+        isRecognized ? "bg-success" : "bg-danger"
+      } me-1">${time}</span>
+      ${
+        isRecognized
+          ? `<span class="text-success">${event.name}</span>`
+          : '<span class="text-danger">Unknown</span>'
+      }
+    `;
+
+    // Add to top of log
+    detectionLog.insertBefore(logEntry, detectionLog.firstChild);
+
+    // Keep only last 20 entries in the UI
+    const entries = detectionLog.querySelectorAll(".detection-entry");
+    if (entries.length > 20) {
+      entries[entries.length - 1].remove();
+    }
+  }
+
+  async function clearDetectionLog() {
+    try {
+      await fetch("/clear_events", { method: "POST" });
+      detectionLog.innerHTML =
+        '<p class="text-muted text-center small mb-0">No detections yet...</p>';
+      lastEventTimestamp = Date.now() / 1000;
+    } catch (error) {
+      console.error("Error clearing events:", error);
+    }
+  }
+
+  // === BUZZER STATUS ===
+  async function loadBuzzerStatus() {
+    try {
+      const response = await fetch("/buzzer_status");
+      const data = await response.json();
+
+      if (buzzerStatus) {
+        if (data.gpio_available) {
+          buzzerStatus.textContent = "🔔 Buzzer Active";
+          buzzerStatus.className = "ms-2 badge bg-success";
+        } else if (data.simulation_mode) {
+          buzzerStatus.textContent = "🔔 Simulated";
+          buzzerStatus.className = "ms-2 badge bg-warning text-dark";
+        } else {
+          buzzerStatus.textContent = "🔕 Buzzer Off";
+          buzzerStatus.className = "ms-2 badge bg-secondary";
+        }
+      }
+    } catch (error) {
+      console.error("Error loading buzzer status:", error);
+    }
+  }
+
+  // === MODEL AND FACE MANAGEMENT ===
   async function reloadModel() {
     try {
       reloadModelBtn.disabled = true;
@@ -196,7 +356,13 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  // === CLEANUP ===
   window.addEventListener("beforeunload", function (e) {
+    // Stop polling
+    if (eventPollingInterval) {
+      clearInterval(eventPollingInterval);
+    }
+
     this.fetch("/close_cam")
       .then((res) => res.json())
       .then((data) => {

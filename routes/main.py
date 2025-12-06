@@ -1,6 +1,7 @@
-from flask import Blueprint, render_template, Response, jsonify
-from camera import generate_frames_with_detection, release_camera
+from flask import Blueprint, render_template, Response, jsonify, request
+from camera import generate_frames_with_detection, release_camera, get_detection_events, clear_detection_events
 from face_detection import train_model, load_model, get_registered_names, get_model_info
+from buzzer import get_buzzer_status
 
 main_bp = Blueprint('main', __name__)
 
@@ -47,3 +48,27 @@ def model_status():
 def close_cam():
     release_camera()
     return "Camera Closed", 200
+
+
+@main_bp.route('/detection_events')
+def detection_events():
+    """Get recent detection events for notifications."""
+    since = request.args.get('since', 0, type=float)
+    events = get_detection_events(since)
+    return jsonify({
+        'events': events,
+        'count': len(events)
+    })
+
+
+@main_bp.route('/clear_events', methods=['POST'])
+def clear_events():
+    """Clear all detection events."""
+    clear_detection_events()
+    return jsonify({'success': True})
+
+
+@main_bp.route('/buzzer_status')
+def buzzer_status():
+    """Get buzzer configuration status."""
+    return jsonify(get_buzzer_status())

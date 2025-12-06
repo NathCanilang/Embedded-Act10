@@ -5,6 +5,13 @@ System{% endblock %} {% block extra_css %}
   href="{{ url_for('static', filename='css/main.css') }}"
 />
 {% endblock %} {% block content %}
+<!-- Notification Toast Container -->
+<div
+  class="toast-container position-fixed top-0 end-0 p-3"
+  id="toast-container"
+  style="z-index: 1055"
+></div>
+
 <div class="row">
   <!-- Video Feed Section -->
   <div class="col-lg-8 mb-4">
@@ -33,6 +40,11 @@ System{% endblock %} {% block extra_css %}
           <span class="text-muted">
             <span id="status-indicator" class="status-dot"></span>
             <span id="status-text">Camera Active</span>
+            <span
+              id="buzzer-status"
+              class="ms-2 badge bg-secondary"
+              title="Buzzer status"
+            ></span>
           </span>
           <a
             href="{{ url_for('register.register_page') }}"
@@ -104,7 +116,7 @@ System{% endblock %} {% block extra_css %}
     </div>
 
     <!-- Instructions Card -->
-    <div class="card bg-dark border-secondary">
+    <div class="card bg-dark border-secondary mb-4">
       <div class="card-header bg-info text-dark">
         <h5 class="mb-0"><span class="me-2">ℹ️</span> How it Works</h5>
       </div>
@@ -117,8 +129,32 @@ System{% endblock %} {% block extra_css %}
           <li>
             Unknown faces show with <span class="text-danger">red</span> boxes
           </li>
+          <li>
+            <span class="text-warning">🔔 Buzzer</span> alerts for unknown faces
+          </li>
           <li>Click "Register New Face" to add someone</li>
         </ol>
+      </div>
+    </div>
+
+    <!-- Detection Log Card -->
+    <div class="card bg-dark border-secondary">
+      <div
+        class="card-header bg-warning text-dark d-flex justify-content-between align-items-center"
+      >
+        <h5 class="mb-0"><span class="me-2">📜</span> Detection Log</h5>
+        <button
+          class="btn btn-sm btn-outline-dark"
+          id="clear-log-btn"
+          title="Clear Log"
+        >
+          🗑️
+        </button>
+      </div>
+      <div class="card-body p-2" style="max-height: 200px; overflow-y: auto">
+        <div id="detection-log">
+          <p class="text-muted text-center small mb-0">No detections yet...</p>
+        </div>
       </div>
     </div>
   </div>

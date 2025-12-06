@@ -8,7 +8,9 @@ Camera Module - Handles camera operations with OS-specific support
 import cv2
 import platform
 import sys
+import time
 from face_detection import detect_face, recognize_face
+from buzzer import activate_buzzer
 
 # Detect operating system
 IS_WINDOWS = platform.system() == 'Windows'
@@ -39,6 +41,12 @@ if IS_LINUX:
 
 # Face cascade for detection
 face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_alt.xml")
+
+# Detection events for notifications
+detection_events = []
+MAX_EVENTS = 50  # Keep last 50 events
+NOTIFICATION_COOLDOWN = 3.0  # Seconds between notifications for same person
+last_notifications = {}  # Track last notification time per person
 
 def get_camera():
     """Get or initialize camera based on OS"""
@@ -142,7 +150,10 @@ def generate_frames_with_detection():
     """
     Generate frames with face detection and LBPH-based recognition.
     Uses smoothing to reduce bounding box jitter.
+    Triggers buzzer for unknown faces and tracks detection events.
     """
+    global detection_events, last_notifications
+    
     cam = get_camera()
     
     # Smoothing: store previous face positions for stability
@@ -158,6 +169,7 @@ def generate_frames_with_detection():
         faces = detect_face(frame)
         
         current_faces = {}
+        current_time = time.time()
         
         # Draw bounding boxes for detected faces
         for (x, y, w, h, face_gray) in faces:
@@ -184,6 +196,30 @@ def generate_frames_with_detection():
                 face_key = f"{center_x}_{center_y}"
             
             current_faces[face_key] = (x, y, w, h, name)
+            
+            # Handle detection events and notifications
+            person_id = name if name else "Unknown"
+            last_notif_time = last_notifications.get(person_id, 0)
+            
+            if current_time - last_notif_time > NOTIFICATION_COOLDOWN:
+                # Create detection event
+                event = {
+                    'timestamp': current_time,
+                    'name': name,
+                    'confidence': confidence,
+                    'type': 'recognized' if name else 'unknown'
+                }
+                detection_events.append(event)
+                
+                # Trim events list if too long
+                if len(detection_events) > MAX_EVENTS:
+                    detection_events = detection_events[-MAX_EVENTS:]
+                
+                last_notifications[person_id] = current_time
+                
+                # Trigger buzzer for unknown faces
+                if not name:
+                    activate_buzzer(duration=0.3)
             
             if name:
                 # Known face - GREEN box
@@ -232,3 +268,26 @@ def get_camera_info():
         'picamera_available': picamera_available,
         'camera_type': 'PiCamera2' if (IS_RASPBERRY_PI and picamera_available) else 'OpenCV'
     }
+
+
+def get_detection_events(since_timestamp=0):
+    """
+    Get detection events since a given timestamp.
+    
+    Args:
+        since_timestamp: Only return events after this timestamp
+    
+    Returns:
+        List of detection events
+    """
+    global detection_events
+    
+    if since_timestamp:
+        return [e for e in detection_events if e['timestamp'] > since_timestamp]
+    return detection_events.copy()
+
+
+def clear_detection_events():
+    """Clear all detection events."""
+    global detection_events
+    detection_events = []
